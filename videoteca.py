@@ -1,28 +1,60 @@
 import streamlit as st
-from database import listar_conteudo_videoteca, registrar_estudo, pesquisar_global
+import pandas as pd
+from biblioteca_conteudo import VIDEOTECA_GLOBAL
 
 def render_videoteca(conn_ignored):
-    st.header("📚 Videoteca")
-    termo = st.text_input("🔍 Pesquisar...", placeholder="Tema...")
+    st.header("📚 Videoteca Global")
     
-    if termo:
-        df = pesquisar_global(termo)
-    else:
-        df = listar_conteudo_videoteca()
-
-    if df.empty:
-        st.info("Videoteca vazia.")
+    # 1. Carregar dados do arquivo estático (biblioteca_conteudo.py)
+    # Estrutura da lista: [Grande Area, Assunto, Tipo, Subtipo, Titulo, Link, ID]
+    colunas = ['grande_area', 'assunto', 'tipo', 'subtipo', 'titulo', 'link', 'id_conteudo']
+    try:
+        df = pd.DataFrame(VIDEOTECA_GLOBAL, columns=colunas)
+    except Exception as e:
+        st.error(f"Erro ao carregar biblioteca_conteudo.py: {e}")
         return
 
-    areas = ["Todas"] + sorted(df['grande_area'].unique().tolist())
-    escolha = st.pills("Filtro:", areas, default="Todas")
-    if escolha != "Todas": df = df[df['grande_area'] == escolha]
+    # 2. Barra de Pesquisa
+    termo = st.text_input("🔍 Pesquisar na videoteca...", placeholder="Ex: Diabetes, Trauma, Cirurgia...")
+    
+    if termo:
+        # Filtra em qualquer coluna de texto
+        mask = df.apply(lambda x: x.astype(str).str.contains(termo, case=False, na=False)).any(axis=1)
+        df = df[mask]
 
-    for assunto in df['assunto'].unique():
-        with st.expander(f"🔹 {assunto}"):
-            items = df[df['assunto'] == assunto]
-            for _, row in items.iterrows():
-                c1, c2 = st.columns([3, 1])
-                c1.markdown(f"**{row['titulo']}**\n<small>{row['subtipo']}</small>", unsafe_allow_html=True)
+    if df.empty:
+        st.warning("Nenhum conteúdo encontrado com esses termos.")
+        return
+
+    # 3. Filtro de Áreas (Pills)
+    lista_areas = ["Todas"] + sorted(df['grande_area'].unique().tolist())
+    escolha_area = st.pills("Filtrar por Área:", lista_areas, default="Todas")
+    
+    if escolha_area != "Todas":
+        df = df[df['grande_area'] == escolha_area]
+
+    # 4. Renderização agrupada por Assunto
+    # Pegamos os assuntos únicos presentes no DataFrame filtrado
+    assuntos_disponiveis = sorted(df['assunto'].unique().tolist())
+
+    for assunto in assuntos_disponiveis:
+        # Cria um expander para cada assunto
+        itens_do_assunto = df[df['assunto'] == assunto]
+        
+        # O título do expander mostra a área e a quantidade de itens
+        qtd = len(itens_do_assunto)
+        area_label = itens_do_assunto.iloc[0]['grande_area']
+        
+        with st.expander(f"🔹 {assunto} ({qtd} itens) - {area_label}", expanded=False):
+            for _, row in itens_do_assunto.iterrows():
+                # Layout de cada item
+                c1, c2 = st.columns([0.85, 0.15])
+                
+                with c1:
+                    # Ícone baseado no tipo
+                    icone = "🎥" if row['tipo'] == 'Video' else "📄"
+                    # Renderiza o título (que já vem com markdown do arquivo original)
+                    st.markdown(f"{icone} {row['titulo']}")
+                
                 with c2:
-                    st.link_button("Abrir", row['link'], use_container_width=True)
+                    st.link_button("Acessar", row['link'], use_container_width=True)
