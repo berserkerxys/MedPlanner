@@ -87,13 +87,14 @@ def verificar_login(u, p):
         return False, f"Erro na autenticação: {str(e)}"
 
 def criar_usuario(u, p, n):
-    """Regista novo utilizador."""
+    """Regista novo utilizador e limpa cache de usuários."""
     client = get_supabase()
     if not client: return False, "Sem conexão com o servidor"
     try:
         hashed = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         client.table("usuarios").insert({"username": u, "nome": n, "password_hash": hashed}).execute()
         client.table("perfil_gamer").insert({"usuario_id": u, "nivel": 1, "xp": 0, "titulo": "Calouro"}).execute()
+        st.cache_data.clear()
         return True, "Conta criada com sucesso!"
     except Exception:
         return False, "Erro: O nome de utilizador já está em uso"
@@ -102,17 +103,18 @@ def criar_usuario(u, p, n):
 # 📊 MÓDULO 3: ANALYTICS E GAMIFICAÇÃO
 # ==========================================
 
+@st.cache_data(ttl=60) # Cache de 1 minuto para o progresso do dia (leve)
 def get_progresso_hoje(u):
     """Calcula volume de questões do dia."""
     client = get_supabase()
     if not client: return 0
     hoje = datetime.now().strftime("%Y-%m-%d")
     try:
-        # Busca apenas o necessário para ser leve
         res = client.table("historico").select("total").eq("usuario_id", u).eq("data_estudo", hoje).execute()
         return sum([int(i['total']) for i in res.data])
     except: return 0
 
+@st.cache_data(ttl=300) # Cache de 5 minutos para status gamer
 def get_status_gamer(u):
     """Recupera status de gamificação."""
     client = get_supabase()
@@ -132,8 +134,9 @@ def get_status_gamer(u):
         }, pd.DataFrame()
     except: return None, pd.DataFrame()
 
+@st.cache_data(ttl=300) # Cache de 5 minutos para os dados dos gráficos
 def get_dados_graficos(u):
-    """Busca histórico para gráficos (sem cache para refletir mudanças imediatas)."""
+    """Busca histórico para gráficos."""
     client = get_supabase()
     if not client: return pd.DataFrame()
     try:
@@ -156,7 +159,7 @@ def get_dados_graficos(u):
 # ==========================================
 
 def registrar_estudo(u, assunto, acertos, total, data_personalizada=None, area_forçada=None, agendar_srs=True):
-    """Regista estudo e limpa caches de dados afetados."""
+    """Regista estudo e limpa caches para atualizar UI."""
     client = get_supabase()
     if not client: return "Erro: Banco offline"
     
@@ -186,11 +189,13 @@ def registrar_estudo(u, assunto, acertos, total, data_personalizada=None, area_f
             nxp = current_xp + int(total * 2)
             client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
         
+        # Limpar caches de dados para forçar atualização no Dashboard e Agenda
+        st.cache_data.clear()
         return "✅ Registado com sucesso!"
     except Exception as e: return f"Erro ao salvar: {str(e)}"
 
 def registrar_simulado(u, dados, data_personalizada=None):
-    """Regista simulado otimizando chamadas ao banco."""
+    """Regista simulado e limpa caches."""
     client = get_supabase()
     if not client: return "Erro"
     
@@ -217,11 +222,13 @@ def registrar_simulado(u, dados, data_personalizada=None):
             nxp = res_perfil.data[0]['xp'] + int(total_q * 2.5)
             client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
         
+        st.cache_data.clear()
         return f"✅ Simulado guardado! ({total_q}q)"
     except Exception as e: return f"Erro: {str(e)}"
 
+@st.cache_data(ttl=300) # Cache de 5 minutos para a lista da agenda
 def listar_revisoes_completas(u):
-    """Busca revisões."""
+    """Busca revisões com cache para performance na agenda."""
     client = get_supabase()
     if not client: return pd.DataFrame()
     try:
@@ -230,7 +237,7 @@ def listar_revisoes_completas(u):
     except: return pd.DataFrame()
 
 def concluir_revisao(rid, acertos, total):
-    """Conclui revisão e gera o próximo passo SRS."""
+    """Conclui revisão, gera o próximo passo SRS e limpa caches."""
     client = get_supabase()
     if not client: return "Erro"
     try:
@@ -257,6 +264,7 @@ def concluir_revisao(rid, acertos, total):
                 "tipo": prox_tipo, "status": "Pendente"
             }).execute()
             
+        st.cache_data.clear()
         return f"✅ Revisão Concluída! Próxima: {prox_tipo if prox_tipo else 'Fim'}"
     except Exception as e: return f"Erro: {str(e)}"
 
@@ -273,13 +281,13 @@ def salvar_conteudo_exato(mid, tit, lnk, tag, tp, sub):
     return f"✅ {tit} em cache"
 
 def exportar_videoteca_para_arquivo():
-    """Gera o ficheiro biblioteca_conteudo.py."""
+    """Gera o ficheiro biblioteca_conteudo.py e limpa cache de vídeo."""
     if not _SYNC_CACHE: return
     try:
         with open("biblioteca_conteudo.py", "w", encoding="utf-8") as f:
             f.write("# ARQUIVO MESTRE DE CONTEÚDO (GERADO AUTOMATICAMENTE PELO SYNC.PY)\n")
             f.write(f"VIDEOTECA_GLOBAL = {repr(_SYNC_CACHE)}")
-        st.cache_data.clear() # Limpa o cache para forçar recarga dos novos vídeos
+        st.cache_data.clear() 
     except Exception as e:
         print(f"Erro ao exportar arquivo: {e}")
 
