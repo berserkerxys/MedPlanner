@@ -1,5 +1,6 @@
 # database.py
-# Versão Estrita: Sidebar lê APENAS aulas_medcof.py | Videoteca lê biblioteca_conteudo.py
+# Versão Corrigida: Restaura listar_conteudo_videoteca para o Dashboard
+# Mantém Sidebar estrita (apenas aulas_medcof.py)
 
 import os
 import json
@@ -39,37 +40,49 @@ def _carregar_dados_medcof_estrito():
     try:
         import aulas_medcof
         
-        # Tenta localizar a variável principal DADOS_LIMPOS
+        # 1. Tenta pegar a variável DADOS_LIMPOS (padrão esperado)
         dados = getattr(aulas_medcof, 'DADOS_LIMPOS', None)
         
-        # Se não achar DADOS_LIMPOS, procura qualquer lista grande no arquivo
+        # 2. Se não achar, varre o arquivo procurando qualquer lista grande
         if not dados:
             for name in dir(aulas_medcof):
                 if name.startswith("_"): continue
                 val = getattr(aulas_medcof, name)
-                if isinstance(val, list) and len(val) > 5: # Assume que a lista principal tem vários itens
+                if isinstance(val, list) and len(val) > 2: 
                     dados = val
                     break
         
-        # Processa a lista encontrada
+        # 3. Processa os dados encontrados
         if dados:
             for item in dados:
-                # Espera tuplas: ("Nome da Aula", "Área")
+                # Se for tupla ("Aula", "Area")
                 if isinstance(item, tuple) and len(item) >= 2:
-                    aula = item[0].strip()
-                    area = item[1].strip()
+                    aula = str(item[0]).strip()
+                    area = str(item[1]).strip()
                     lista_aulas.append(aula)
                     mapa_areas[aula] = area
+                # Se for string simples
                 elif isinstance(item, str):
                     lista_aulas.append(item.strip())
-                    
+                # Se for dicionário
+                elif isinstance(item, dict):
+                    t = item.get('titulo') or item.get('assunto')
+                    a = item.get('grande_area') or item.get('area')
+                    if t:
+                        lista_aulas.append(str(t))
+                        if a: mapa_areas[str(t)] = str(a)
+                        
     except ImportError:
-        # Se o arquivo não existir, retorna vazio mas não quebra
-        pass
+        print("Aviso: Arquivo aulas_medcof.py não encontrado ou com erro de importação.")
+        return ["Erro: aulas_medcof.py não encontrado"], {}
     except Exception as e:
-        print(f"Erro ao ler aulas_medcof.py: {e}")
+        print(f"Erro ao processar aulas_medcof.py: {e}")
+        return [f"Erro ao ler aulas: {e}"], {}
 
-    # Remove duplicatas e ordena
+    if not lista_aulas:
+        return ["Aviso: Nenhuma aula encontrada em aulas_medcof.py"], {}
+
+    # Remove duplicatas mantendo a ordem e classifica
     return sorted(list(set(lista_aulas))), mapa_areas
 
 # -------------------------
@@ -80,11 +93,8 @@ def get_lista_assuntos_nativa():
     """
     Usada pela Sidebar.
     Retorna APENAS as aulas encontradas nos blocos do aulas_medcof.py.
-    NÃO mistura com videoteca.
     """
     aulas, _ = _carregar_dados_medcof_estrito()
-    if not aulas:
-        return ["Banco Geral - (Arquivo aulas_medcof.py não carregado)"]
     return aulas
 
 def get_area_por_assunto(assunto):
@@ -94,6 +104,46 @@ def get_area_por_assunto(assunto):
     """
     _, mapa = _carregar_dados_medcof_estrito()
     return mapa.get(assunto, "Geral")
+
+# -------------------------
+# VIDEOTECA (NECESSÁRIO PARA DASHBOARD)
+# -------------------------
+@st.cache_data(ttl=None)
+def listar_conteudo_videoteca():
+    """
+    Retorna DataFrame da videoteca.
+    Usado pelo Dashboard e Videoteca, mas NÃO pela Sidebar.
+    """
+    # Tenta Supabase
+    client = get_supabase()
+    if client:
+        try:
+            res = client.table("videoteca").select("*").execute()
+            if res.data: return pd.DataFrame(res.data)
+        except: pass
+    
+    # Tenta arquivo python local (biblioteca_conteudo.py)
+    try:
+        from biblioteca_conteudo import VIDEOTECA_GLOBAL
+        return pd.DataFrame(VIDEOTECA_GLOBAL, columns=['grande_area', 'assunto', 'tipo', 'subtipo', 'titulo', 'link', 'id_conteudo'])
+    except: pass
+
+    # Tenta JSON exportado
+    if os.path.exists("videoteca_export.json"):
+        try:
+            return pd.read_json("videoteca_export.json")
+        except: pass
+        
+    return pd.DataFrame()
+
+def pesquisar_global(termo):
+    df = listar_conteudo_videoteca()
+    if df.empty: return df
+    mask = pd.Series([False]*len(df))
+    for col in ['titulo', 'assunto']:
+        if col in df.columns:
+            mask |= df[col].astype(str).str.contains(termo, case=False, na=False)
+    return df[mask]
 
 # -------------------------
 # DATABASE & SUPABASE HELPERS
