@@ -4,11 +4,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import bcrypt
 import streamlit as st
-import json
 import os
-import re
 
-# --- CONEXÃO FIREBASE ---
+# --- CONFIGURAÇÃO DA CONEXÃO FIREBASE (SINGLETON) ---
 if not firebase_admin._apps:
     try:
         if "firebase" in st.secrets:
@@ -23,145 +21,66 @@ if not firebase_admin._apps:
         print(f"Erro Firebase Init: {e}")
 
 def get_db():
-    try: return firestore.client()
-    except: return None
-
-# Compatibilidade
-def get_connection(): return None
-
-# ==========================================
-# ⚙️ MÓDULO DE SINCRONIZAÇÃO (BIBLIOTECA -> CLOUD)
-# ==========================================
-
-def inicializar_db():
-    db = get_db()
-    if db:
-        seed_universal(db)
-
-def seed_universal(db):
-    """
-    Verifica se o banco está vazio e popula com os temas base 
-    e o conteúdo do arquivo biblioteca_conteudo.py
-    """
     try:
-        # 1. Garante Temas Base (Edital)
-        docs_assuntos = list(db.collection('assuntos').limit(1).stream())
-        if not docs_assuntos:
-            print("🌱 Criando assuntos base...")
-            temas_iniciais = [
-                ('Banco Geral - Livre', 'Banco Geral'),
-                ('Simulado - Geral', 'Simulado')
-            ]
-            batch = db.batch()
-            for n, a in temas_iniciais:
-                batch.set(db.collection('assuntos').document(), {'nome': n, 'grande_area': a})
-            batch.commit()
+        return firestore.client()
+    except:
+        return None
 
-        # 2. Popula Videoteca a partir do backup biblioteca_conteudo.py
-        docs_conteudo = list(db.collection('conteudos').limit(1).stream())
-        if not docs_conteudo:
-            importar_videoteca_do_backup()
-            
-    except Exception as e:
-        print(f"Erro no Seed: {e}")
+def get_connection():
+    """Função de compatibilidade para evitar quebras em imports antigos."""
+    return None
 
-def importar_videoteca_do_backup():
-    """Lê o arquivo master local e envia tudo para o Firebase"""
+# ==========================================
+# ⚙️ SINCRONIZAÇÃO EM MASSA (BIBLIOTECA)
+# ==========================================
+
+def sincronizar_videoteca_completa():
+    """Importa todos os itens de biblioteca_conteudo.py em lotes de 400."""
     db = get_db()
+    if not db: return "Erro: Sem conexão com Firebase."
+    
     try:
         from biblioteca_conteudo import VIDEOTECA_GLOBAL
-        if not VIDEOTECA_GLOBAL: return "Backup vazio."
+        if not VIDEOTECA_GLOBAL: return "⚠️ Ficheiro de backup está vazio."
 
-        print(f"📦 Importando {len(VIDEOTECA_GLOBAL)} itens para a nuvem...")
-        
-        # Mapeia assuntos atuais para evitar duplicados
+        # Mapa de assuntos para evitar duplicados
         assuntos_ref = db.collection('assuntos').stream()
         assuntos_map = {d.to_dict()['nome']: d.id for d in assuntos_ref}
 
-        for item in VIDEOTECA_GLOBAL:
-            # Estrutura esperada: [area, assunto, tipo, subtipo, titulo, link, msg_id]
-            area, assunto, tipo, subtipo, titulo, link, msg_id = item
-            
-            # Se o assunto não existe, cria
-            if assunto not in assuntos_map:
-                new_ass_ref = db.collection('assuntos').add({'nome': assunto, 'grande_area': area})
-                aid = new_ass_ref[1].id
-                assuntos_map[assunto] = aid
-            else:
-                aid = assuntos_map[assunto]
-
-            # Adiciona o conteúdo
-            db.collection('conteudos').document(str(msg_id)).set({
-                'assunto_id': aid,
-                'tipo': tipo,
-                'subtipo': subtipo,
-                'titulo': titulo,
-                'link': link,
-                'message_id': msg_id
-            })
-        return f"✅ {len(VIDEOTECA_GLOBAL)} itens sincronizados!"
-    except ImportError:
-        return "⚠️ Arquivo biblioteca_conteudo.py não encontrado."
-    except Exception as e:
-        return f"❌ Erro na importação: {e}"
-
-# Função exigida pelo sync.py do Telegram
-def salvar_conteudo_exato(mid, tit, lnk, tag, tp, sub):
-    """
-    Função usada pelo script de sincronização para salvar um item específico
-    vindo do Telegram diretamente no Firestore.
-    """
-    db = get_db()
-    try:
-        # Tenta mapear a hashtag para um assunto existente
-        # Ex: #Apendicite_Aguda -> Apendicite Aguda
-        nome_assunto = tag.replace("_", " ").strip()
+        total_itens = len(VIDEOTECA_GLOBAL)
+        chunk_size = 400
         
-        # Busca assunto
-        docs = list(db.collection('assuntos').where('nome', '==', nome_assunto).limit(1).stream())
-        if docs:
-            aid = docs[0].id
-        else:
-            # Cria se não existir (Área padrão: Outros, você pode ajustar depois)
-            new_ref = db.collection('assuntos').add({'nome': nome_assunto, 'grande_area': 'Outros'})
-            aid = new_ref[1].id
+        for i in range(0, total_itens, chunk_size):
+            batch = db.batch()
+            chunk = VIDEOTECA_GLOBAL[i : i + chunk_size]
+            
+            for item in chunk:
+                # Estrutura: [area, assunto, tipo, subtipo, titulo, link, msg_id]
+                area, ass_nome, tipo, subtipo, titulo, link, msg_id = item
+                
+                if ass_nome not in assuntos_map:
+                    new_ref = db.collection('assuntos').add({'nome': ass_nome, 'grande_area': area})
+                    aid = new_ref[1].id
+                    assuntos_map[ass_nome] = aid
+                else:
+                    aid = assuntos_map[ass_nome]
 
-        # Salva o conteúdo usando o message_id como ID do documento para evitar duplicatas
-        db.collection('conteudos').document(str(mid)).set({
-            'assunto_id': aid,
-            'tipo': tp,
-            'subtipo': sub,
-            'titulo': tit,
-            'link': lnk,
-            'message_id': mid
-        })
-        return "✅ Salvo na Nuvem"
+                doc_ref = db.collection('conteudos').document(str(msg_id))
+                batch.set(doc_ref, {
+                    'assunto_id': aid, 'tipo': tipo, 'subtipo': subtipo,
+                    'titulo': titulo, 'link': link, 'message_id': msg_id,
+                    'sync_at': firestore.SERVER_TIMESTAMP
+                })
+            batch.commit()
+            
+        return f"🎉 Sucesso! {total_itens} itens sincronizados."
+    except ImportError:
+        return "❌ Ficheiro biblioteca_conteudo.py não encontrado."
     except Exception as e:
-        return f"Erro: {e}"
-
-def exportar_videoteca_para_arquivo():
-    """
-    Mantém o arquivo local sincronizado com a nuvem (backup reverso).
-    """
-    db = get_db()
-    conts = db.collection('conteudos').stream()
-    assuntos = {d.id: d.to_dict() for d in db.collection('assuntos').stream()}
-    
-    lista_final = []
-    for c in conts:
-        cd = c.to_dict()
-        a = assuntos.get(cd.get('assunto_id'), {'grande_area': '?', 'nome': '?'})
-        lista_final.append([
-            a['grande_area'], a['nome'], cd['tipo'], cd['subtipo'], 
-            cd['titulo'], cd['link'], cd['message_id']
-        ])
-    
-    with open("biblioteca_conteudo.py", "w", encoding="utf-8") as f:
-        f.write("# Backup Automático\n")
-        f.write(f"VIDEOTECA_GLOBAL = {lista_final}")
+        return f"❌ Erro: {str(e)}"
 
 # ==========================================
-# 📊 OUTRAS FUNÇÕES (LOGIN, DASHBOARD, ETC)
+# 🔐 SEGURANÇA & GAMIFICAÇÃO
 # ==========================================
 
 def verificar_login(u, p):
@@ -177,11 +96,32 @@ def verificar_login(u, p):
 def criar_usuario(u, p, n):
     db = get_db()
     if list(db.collection('usuarios').where('username', '==', u).stream()):
-        return False, "Usuário já existe"
+        return False, "Utilizador já existe."
     hashed = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     db.collection('usuarios').document(u).set({'username': u, 'nome': n, 'password_hash': hashed})
     db.collection('perfil_gamer').document(u).set({'usuario_id': u, 'nivel': 1, 'xp': 0, 'titulo': 'Calouro'})
     return True, "Criado com sucesso!"
+
+def get_status_gamer(u):
+    db = get_db()
+    doc = db.collection('perfil_gamer').document(u).get()
+    if not doc.exists: return None, pd.DataFrame()
+    d = doc.to_dict()
+    xp = d.get('xp', 0)
+    nivel = 1 + (xp // 1000)
+    p = {'nivel': nivel, 'xp_atual': xp % 1000, 'xp_total': xp, 'titulo': 'Residente', 'xp_proximo': 1000}
+    return p, pd.DataFrame()
+
+def adicionar_xp(u, qtd):
+    db = get_db()
+    ref = db.collection('perfil_gamer').document(u)
+    doc = ref.get()
+    if doc.exists:
+        ref.update({'xp': doc.to_dict().get('xp', 0) + qtd})
+
+# ==========================================
+# 📊 ANALYTICS
+# ==========================================
 
 def get_dados_graficos(u):
     db = get_db()
@@ -196,8 +136,7 @@ def get_dados_graficos(u):
         a_info = assuntos.get(str(aid), {'nome': 'Outros', 'grande_area': 'Outros'})
         clean.append({
             'data': h.get('data_estudo'),
-            'acertos': h.get('acertos', 0),
-            'total': h.get('total', 0),
+            'acertos': h.get('acertos', 0), 'total': h.get('total', 0),
             'percentual': (h.get('acertos', 0) / h.get('total', 1) * 100),
             'area': a_info['grande_area']
         })
@@ -209,15 +148,9 @@ def get_progresso_hoje(u):
     docs = db.collection('historico').where('usuario_id', '==', u).where('data_estudo', '==', hoje).stream()
     return sum([d.to_dict().get('total', 0) for d in docs])
 
-def get_status_gamer(u):
-    db = get_db()
-    doc = db.collection('perfil_gamer').document(u).get()
-    if not doc.exists: return None, pd.DataFrame()
-    d = doc.to_dict()
-    xp = d.get('xp', 0)
-    nivel = 1 + (xp // 1000)
-    p = {'nivel': nivel, 'xp_atual': xp % 1000, 'xp_total': xp, 'titulo': 'Estudante', 'xp_proximo': 1000}
-    return p, pd.DataFrame()
+# ==========================================
+# 📝 REGISTROS
+# ==========================================
 
 def registrar_estudo(u, assunto, acertos, total, data_personalizada=None):
     db = get_db(); dt = data_personalizada.strftime("%Y-%m-%d")
@@ -225,16 +158,25 @@ def registrar_estudo(u, assunto, acertos, total, data_personalizada=None):
     if not docs: return "Erro: Tema não encontrado."
     aid = docs[0].id
     db.collection('historico').add({'usuario_id': u, 'assunto_id': aid, 'data_estudo': dt, 'acertos': acertos, 'total': total})
-    return "✅ Estudo Registrado!"
+    adicionar_xp(u, int(total * 2))
+    return "✅ Registado!"
 
 def registrar_simulado(u, dados, data_personalizada=None):
     db = get_db(); dt = data_personalizada.strftime("%Y-%m-%d"); batch = db.batch()
+    t_q = 0
     for area, v in dados.items():
         if v['total'] > 0:
+            t_q += v['total']
             docs = list(db.collection('assuntos').where('nome', '==', f"Simulado - {area}").limit(1).stream())
             aid = docs[0].id if docs else db.collection('assuntos').add({'nome': f"Simulado - {area}", 'grande_area': area})[1].id
             batch.set(db.collection('historico').document(), {'usuario_id': u, 'assunto_id': aid, 'data_estudo': dt, 'acertos': v['acertos'], 'total': v['total']})
-    batch.commit(); return "✅ Simulado Salvo!"
+    batch.commit()
+    adicionar_xp(u, int(t_q * 2.5))
+    return "✅ Simulado Salvo!"
+
+# ==========================================
+# 📅 LISTAGENS
+# ==========================================
 
 def listar_revisoes_completas(u):
     db = get_db()
@@ -264,10 +206,18 @@ def listar_conteudo_videoteca():
 
 def pesquisar_global(t):
     df = listar_conteudo_videoteca()
-    if df.empty: return df
-    return df[df['titulo'].str.contains(t, case=False) | df['assunto'].str.contains(t, case=False)]
+    return df[df['titulo'].str.contains(t, case=False) | df['assunto'].str.contains(t, case=False)] if not df.empty else df
 
 def excluir_conteudo(id): 
     get_db().collection('conteudos').document(id).delete()
 
-inicializar_db()
+# Inicialização Base
+try:
+    if get_db():
+        docs = list(get_db().collection('assuntos').limit(1).stream())
+        if not docs:
+            batch = get_db().batch()
+            for n, a in [('Banco Geral - Livre', 'Banco Geral'), ('Simulado - Geral', 'Simulado')]:
+                batch.set(get_db().collection('assuntos').document(), {'nome': n, 'grande_area': a})
+            batch.commit()
+except: pass
