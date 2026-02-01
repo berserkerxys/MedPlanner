@@ -16,7 +16,7 @@ def get_supabase() -> Client:
     except Exception: return None
 
 # ==========================================
-# 📚 VIDEOTECA E PESQUISA
+# 📚 VIDEOTECA E PESQUISA (FIX IMPORT ERROR)
 # ==========================================
 @st.cache_data(ttl=None)
 def listar_conteudo_videoteca():
@@ -38,10 +38,10 @@ def get_area_por_assunto(assunto):
 @st.cache_data(ttl=None)
 def get_lista_assuntos_nativa():
     df = listar_conteudo_videoteca()
-    return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Banco Geral"]
+    return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Geral"]
 
 def pesquisar_global(termo):
-    """Resolve o ImportError na videoteca.py"""
+    """Resolve o erro de importação na videoteca.py"""
     df = listar_conteudo_videoteca()
     if df.empty: return df
     mask = df['titulo'].str.contains(termo, case=False, na=False) | df['assunto'].str.contains(termo, case=False, na=False)
@@ -86,8 +86,8 @@ def get_status_gamer(u, nonce):
         a = sum([int(i['acertos']) for i in h.data]) if h.data else 0
         
         missoes = [
-            {"Icon": "🎯", "Meta": "Objetivo Diário", "Prog": q, "Objetivo": meta, "Unid": "q"},
-            {"Icon": "🔥", "Meta": "XP Diário", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
+            {"Icon": "🎯", "Meta": "Meta Diária", "Prog": q, "Objetivo": meta, "Unid": "q"},
+            {"Icon": "🔥", "Meta": "Foco XP", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
         ]
         return status, pd.DataFrame(missoes)
     except: return None, pd.DataFrame()
@@ -101,7 +101,7 @@ def update_meta_diaria(u, nova_meta):
     except: return False
 
 # ==========================================
-# 📝 REGISTROS E ANALYTICS
+# 📝 REGISTOS E GRÁFICOS (LIMPEZA DE DATA)
 # ==========================================
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
     client = get_supabase()
@@ -117,12 +117,7 @@ def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=T
             dt_rev = (dt + timedelta(days=7)).strftime("%Y-%m-%d")
             client.table("revisoes").insert({"usuario_id": u, "assunto_nome": assunto, "grande_area": area, "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"}).execute()
         
-        # XP
-        res_p = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
-        if res_p.data:
-            nxp = int(res_p.data[0]['xp']) + (int(total) * 2)
-            client.table("perfil_gamer").update({"xp": nxp}).eq("usuario_id", u).execute()
-            
+        update_xp(u, int(total) * 2)
         trigger_refresh()
         return "✅ Registado!"
     except: return "Erro"
@@ -138,9 +133,19 @@ def registrar_simulado(u, dados, data_p=None):
             inserts.append({"usuario_id": u, "assunto_nome": f"Simulado - {area}", "area_manual": area, "data_estudo": dt, "acertos": int(v['acertos']), "total": int(v['total'])})
     try:
         if inserts: client.table("historico").insert(inserts).execute()
+        update_xp(u, int(tq * 2.5))
         trigger_refresh()
-        return f"✅ Simulado ({tq}q) salvo!"
+        return f"✅ Simulado salvo!"
     except: return "Erro"
+
+def update_xp(u, qtd):
+    client = get_supabase()
+    try:
+        res = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
+        if res.data:
+            nxp = int(res.data[0]['xp']) + int(qtd)
+            client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
+    except: pass
 
 @st.cache_data(ttl=300)
 def get_dados_graficos(u, nonce):
@@ -154,13 +159,13 @@ def get_dados_graficos(u, nonce):
         df['total'] = df['total'].astype(int)
         df['acertos'] = df['acertos'].astype(int)
         df['percentual'] = (df['acertos'] / df['total'] * 100).round(1)
-        # Normalização de data para o dia (remove horas/minutos para o gráfico ficar limpo)
-        df['data'] = pd.to_datetime(df['data_estudo']).dt.normalize()
+        # NORMALIZAÇÃO CRÍTICA: Remove tempo para o gráfico mostrar apenas datas limpas
+        df['data'] = pd.to_datetime(df['data_estudo']).dt.date
         return df.sort_values('data')
     except: return pd.DataFrame()
 
 # ==========================================
-# 🔐 LOGIN E AGENDA
+# 🔐 AUTH E AGENDA (FIX IMPORT ERRORS)
 # ==========================================
 def verificar_login(u, p):
     client = get_supabase()
@@ -169,7 +174,7 @@ def verificar_login(u, p):
         if res.data:
             if bcrypt.checkpw(p.encode('utf-8'), res.data[0]['password_hash'].encode('utf-8')):
                 return True, res.data[0]['nome']
-        return False, "Dados Incorretos"
+        return False, "Login falhou"
     except: return False, "Erro conexão"
 
 def criar_usuario(u, p, n):
@@ -179,7 +184,7 @@ def criar_usuario(u, p, n):
         client.table("usuarios").insert({"username": u, "nome": n, "password_hash": h}).execute()
         client.table("perfil_gamer").insert({"usuario_id": u, "xp": 0, "titulo": "Interno", "meta_diaria": 50}).execute()
         return True, "Criado!"
-    except: return False, "Usuário já existe"
+    except: return False, "Usuário existe"
 
 def listar_revisoes_completas(u, n):
     """Resolve o ImportError na agenda.py"""

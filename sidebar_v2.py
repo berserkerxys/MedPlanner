@@ -7,7 +7,7 @@ from database import (
 )
 
 def render_sidebar():
-    """Barra lateral com Gamificação, Meta Visual e Registros Totais vs Acertos."""
+    """Barra lateral com Gamificação, Meta Visual e Registos Totais vs Acertos."""
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
@@ -66,7 +66,7 @@ def render_sidebar():
                 for a in areas:
                     st.markdown(f"**{a}**")
                     c1, c2 = st.columns(2)
-                    # Fornece input para Total e Acertos conforme pedido
+                    # Agora permite definir o total e os acertos individualmente
                     s_tot = c1.number_input("Total", 1, 100, 20, key=f"stot_{a}")
                     s_acc = c2.number_input("Acertos", 0, s_tot, 15, key=f"sacc_{a}")
                     res_sim[a] = {"total": s_tot, "acertos": s_acc}
