@@ -7,19 +7,43 @@ def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # --- TELA DE PRÉ-CARREGAMENTO (SINGLE LOADING SCREEN) ---
-    # Forçamos o carregamento de todos os módulos essenciais antes de mostrar o UI
-    with st.spinner("🩺 Preparando o seu painel de alto desempenho..."):
-        # Chamadas simultâneas ao banco/cache
+    # --- SISTEMA DE PRÉ-CARREGAMENTO COM BARRA DE PROGRESSO EM TEMPO REAL ---
+    # Criamos um container temporário para a tela de loading
+    loading_placeholder = st.empty()
+    
+    with loading_placeholder.container():
+        st.markdown("<h3 style='text-align: center;'>🩺 Sincronizando dados médicos...</h3>", unsafe_allow_html=True)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Passo 1: Status e Perfil Gamer
+        status_text.caption("Obtendo perfil do aluno...")
         status, df_m = get_status_gamer(u, nonce)
+        progress_bar.progress(25)
+        time.sleep(0.2)
+        
+        # Passo 2: Histórico e Performance
+        status_text.caption("Analisando histórico de desempenho...")
         df = get_dados_graficos(u, nonce)
+        progress_bar.progress(50)
+        time.sleep(0.2)
         
-        # Aquecemos o cache da videoteca também para que a transição de abas seja instantânea
+        # Passo 3: Cache da Videoteca
+        status_text.caption("Preparando biblioteca de conteúdos...")
         listar_conteudo_videoteca()
+        progress_bar.progress(75)
+        time.sleep(0.2)
         
-        # Pequeno delay técnico para garantir que a transição visual seja suave
-        time.sleep(0.5)
+        # Passo 4: Finalização da UI
+        status_text.caption("Renderizando painel de controle...")
+        progress_bar.progress(100)
+        time.sleep(0.3)
+    
+    # Limpa a tela de loading para mostrar o site
+    loading_placeholder.empty()
 
+    # --- INÍCIO DA INTERFACE DO DASHBOARD ---
+    
     # 1. CABEÇALHO DE STATUS (GAMIFICAÇÃO)
     if status:
         c1, c2 = st.columns([3, 1])
@@ -38,12 +62,10 @@ def render_dashboard(conn_ignored):
         cols = st.columns(3)
         for i, row in df_m.iterrows():
             with cols[i]:
-                # Estilo de card para missões
                 with st.container(border=True):
                     st.markdown(f"**{row['Icon']} {row['Meta']}**")
-                    prog = min(row['Prog'] / row['Objetivo'], 1.0)
-                    # Barra de progresso com a cor específica da missão definida no database
-                    st.progress(prog)
+                    prog_m = min(row['Prog'] / row['Objetivo'], 1.0)
+                    st.progress(prog_m)
                     st.markdown(f"<p style='text-align: right; font-size: 0.8rem; color: gray;'>{row['Prog']} / {row['Objetivo']}</p>", unsafe_allow_html=True)
     
     st.divider()
@@ -70,7 +92,7 @@ def render_dashboard(conn_ignored):
             st.plotly_chart(fig_line, use_container_width=True)
             
         with c2:
-            # Barras com paleta "Bold" para distinguir CLARAMENTE as especialidades
+            # Barras com paleta "Bold" para distinguir as especialidades
             df_area = df.groupby('area')[['acertos', 'total']].sum().reset_index()
             df_area['%'] = (df_area['acertos'] / df_area['total'] * 100).round(1)
             
@@ -96,7 +118,7 @@ def render_dashboard(conn_ignored):
         with m1:
             st.metric("Total de Questões", int(total_q))
         with m2:
-            st.metric("Total de Acertos", int(total_a), delta=f"{int(total_a)} hits")
+            st.metric("Total de Acertos", int(total_a))
         with m3:
             media = (total_a/total_q*100) if total_q > 0 else 0
             st.metric("Aproveitamento Geral", f"{media:.1f}%")
