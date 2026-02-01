@@ -112,22 +112,46 @@ def get_progresso_hoje(u, nonce):
 
 @st.cache_data(ttl=300)
 def get_status_gamer(u, nonce):
-    """Recupera XP e Nível do perfil."""
+    """Recupera XP, Nível e calcula Missões Diárias."""
     client = get_supabase()
     if not client: return None, pd.DataFrame()
+    
     try:
+        # 1. Recuperar Perfil Principal
         res = client.table("perfil_gamer").select("*").eq("usuario_id", u).execute()
         if not res.data: return None, pd.DataFrame()
+        
         d = res.data[0]
         xp = d['xp']
-        return {
-            'nivel': 1 + (xp // 1000), 
+        nivel = 1 + (xp // 1000)
+        
+        status = {
+            'nivel': nivel, 
             'xp_atual': xp % 1000, 
             'xp_total': xp, 
             'titulo': d['titulo'], 
             'xp_proximo': 1000
-        }, pd.DataFrame()
-    except: return None, pd.DataFrame()
+        }
+
+        # 2. Calcular Missões Diárias com base no Histórico
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        hist_hoje = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
+        
+        q_hoje = sum([int(i['total']) for i in hist_hoje.data]) if hist_hoje.data else 0
+        a_hoje = sum([int(i['acertos']) for i in hist_hoje.data]) if hist_hoje.data else 0
+        
+        # Estrutura de missões
+        missoes_data = [
+            {"missao": "🎯 Meta de Questões", "progresso": min(q_hoje, 50), "meta": 50, "unid": "q"},
+            {"missao": "🔥 Foco em Acertos", "progresso": min(a_hoje, 30), "meta": 30, "unid": "ac"},
+            {"missao": "🎓 XP Diário (Questões x 2)", "progresso": min(q_hoje * 2, 100), "meta": 100, "unid": "xp"}
+        ]
+        
+        df_missoes = pd.DataFrame(missoes_data)
+        return status, df_missoes
+
+    except Exception:
+        return None, pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def get_dados_graficos(u, nonce):
