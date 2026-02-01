@@ -1,0 +1,33 @@
+# --- PYTHON ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- AMBIENTE E SEGURANÇA (CRÍTICO) ---
+# Nunca envies estes ficheiros para o GitHub!
+firebase_key.json
+secrets.toml
+.env
+.streamlit/secrets.toml
+
+# --- BASES DE DADOS LOCAIS ---
+*.db
+*.sqlite3
+dados_medcof.db
+
+# --- IDE E SISTEMA OPERATIVO ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- LOGS E DEPURAÇÃO ---
+*.log
+```

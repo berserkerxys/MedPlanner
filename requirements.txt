@@ -1,0 +1,8 @@
+streamlit
+pandas
+matplotlib
+seaborn
+telethon
+bcrypt
+plotly
+firebase-admin
