@@ -8,7 +8,6 @@ def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # LOADING
     loading = st.empty()
     with loading.container():
         st.markdown("<h3 style='text-align: center;'>🩺 Sincronizando Performance Médica...</h3>", unsafe_allow_html=True)
@@ -30,13 +29,12 @@ def render_dashboard(conn_ignored):
                     p = min(row['Prog'] / row['Objetivo'], 1.0) if row['Objetivo'] > 0 else 0
                     st.progress(p)
                     st.caption(f"{row['Prog']} / {row['Objetivo']} {row['Unid']}")
-                    if row['Prog'] >= row['Objetivo']: st.success("Batida!")
 
     st.divider()
 
     # 2. GRÁFICOS (DESIGN FIXED & CATEGORY BASED)
     if not df.empty:
-        st.subheader("📈 Performance por Especialidade")
+        st.subheader("📈 Performance Médica")
         chart_config = {'staticPlot': True}
 
         def plot_pro(dataframe, col, chart_type='bar'):
@@ -52,7 +50,7 @@ def render_dashboard(conn_ignored):
             fig.update_layout(
                 yaxis_range=[0, 105], template="plotly_white", height=400, 
                 margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h", y=1.1, x=0),
-                xaxis=dict(type='category') # REMOVE MILLISECONDS
+                xaxis=dict(type='category') # REMOVE MILISSEGUNDOS
             )
             return fig
 
@@ -64,13 +62,13 @@ def render_dashboard(conn_ignored):
             df['semana'] = pd.to_datetime(df['data']).dt.to_period('W').apply(lambda r: r.start_time.strftime('%d/%m'))
             st.plotly_chart(plot_pro(df, 'semana'), use_container_width=True, config=chart_config)
         with tabs[2]:
-            df['mes'] = pd.to_datetime(df['data']).dt.strftime('%b/%Y')
+            df['mes'] = pd.to_datetime(df['data']).dt.strftime('%m/%Y')
             st.plotly_chart(plot_pro(df, 'mes'), use_container_width=True, config=chart_config)
 
         # KPIs
         st.divider()
         m1, m2, m3 = st.columns(3)
         tq, ta = df['total'].sum(), df['acertos'].sum()
-        m1.metric("Questões Totais", int(tq))
-        m2.metric("Acertos Totais", int(ta))
+        m1.metric("Questões", int(tq))
+        m2.metric("Acertos", int(ta))
         m3.metric("Média Geral", f"{(ta/tq*100 if tq>0 else 0):.1f}%")

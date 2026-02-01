@@ -40,16 +40,15 @@ def get_status_gamer(u, nonce):
             'meta_diaria': meta
         }
         
-        # Dados para as missões
         hoje = datetime.now().strftime("%Y-%m-%d")
         h = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
         q = sum([int(i['total']) for i in h.data]) if h.data else 0
         a = sum([int(i['acertos']) for i in h.data]) if h.data else 0
         
         missoes = [
-            {"Icon": "🎯", "Meta": "Meta de Questões", "Prog": q, "Objetivo": meta, "Unid": "q"},
-            {"Icon": "✅", "Meta": "Acertos do Dia", "Prog": a, "Objetivo": int(meta * 0.7), "Unid": "hits"},
-            {"Icon": "🔥", "Meta": "XP Gerado", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
+            {"Icon": "🎯", "Meta": "Objetivo de Questões", "Prog": q, "Objetivo": meta, "Unid": "q"},
+            {"Icon": "✅", "Meta": "Acertos (Meta 70%)", "Prog": a, "Objetivo": int(meta * 0.7), "Unid": "hits"},
+            {"Icon": "⚡", "Meta": "XP Gerado Hoje", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
         ]
         return status, pd.DataFrame(missoes)
     except: return None, pd.DataFrame()
@@ -61,6 +60,12 @@ def update_meta_diaria(u, nova_meta):
         trigger_refresh()
         return True
     except: return False
+
+def get_progresso_hoje(u, nonce):
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    client = get_supabase()
+    res = client.table("historico").select("total").eq("usuario_id", u).eq("data_estudo", hoje).execute()
+    return sum([int(i['total']) for i in res.data]) if res.data else 0
 
 # ==========================================
 # 📝 SISTEMA DE RESUMOS
@@ -90,7 +95,6 @@ def listar_conteudo_videoteca():
     except: return pd.DataFrame()
 
 def pesquisar_global(termo):
-    """Resolve o erro de importação na videoteca.py"""
     df = listar_conteudo_videoteca()
     if df.empty: return df
     mask = df['titulo'].str.contains(termo, case=False, na=False) | df['assunto'].str.contains(termo, case=False, na=False)
@@ -137,6 +141,11 @@ def registrar_simulado(u, dados, data_p=None):
             inserts.append({"usuario_id": u, "assunto_nome": f"Simulado - {area}", "area_manual": area, "data_estudo": dt, "acertos": int(v['acertos']), "total": int(v['total'])})
     try:
         if inserts: client.table("historico").insert(inserts).execute()
+        nxp_add = int(tq * 2.5)
+        res_p = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
+        if res_p.data:
+            nxp = int(res_p.data[0]['xp']) + nxp_add
+            client.table("perfil_gamer").update({"xp": nxp}).eq("usuario_id", u).execute()
         trigger_refresh()
         return f"✅ Simulado salvo!"
     except: return "Erro"
@@ -185,6 +194,7 @@ def get_dados_graficos(u, nonce):
         df['total'] = df['total'].astype(int)
         df['acertos'] = df['acertos'].astype(int)
         df['percentual'] = (df['acertos'] / df['total'] * 100).round(1)
+        # Forçar normalização para dia puro
         df['data'] = pd.to_datetime(df['data_estudo']).dt.normalize()
         return df.sort_values('data')
     except: return pd.DataFrame()
