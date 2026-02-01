@@ -1,37 +1,79 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from database import listar_revisoes_completas, concluir_revisao
 
 def render_agenda(conn_ignored):
-    st.header("📅 Agenda de Revisões")
+    st.header("📅 Minha Agenda de Revisões")
+    
     u = st.session_state.username
     nonce = st.session_state.data_nonce
+    
+    # Carregar dados
     df = listar_revisoes_completas(u, nonce)
-
+    
     if df.empty:
-        st.info("Registe o seu primeiro estudo para começar!")
+        st.info("Você ainda não tem revisões agendadas. Complete um tema na barra lateral para gerar o primeiro ciclo!")
         return
 
-    status = st.pills("Visualizar:", ["Pendente", "Concluido"], default="Pendente")
-    df_f = df[df['status'] == status].sort_values('data_agendada')
+    # Preparação dos dados
+    df['data_agendada'] = pd.to_datetime(df['data_agendada'])
+    hoje = pd.to_datetime(datetime.now().date())
 
-    if df_f.empty:
-        st.success("Nada para fazer aqui!")
-        return
+    # --- SISTEMA DE FILTROS ---
+    aba_hoje, aba_pendentes, aba_futuras, aba_todas = st.tabs([
+        "🔥 Hoje", "⏳ Pendentes", "📅 Futuras", "📚 Todas"
+    ])
 
-    for _, row in df_f.iterrows():
-        with st.container(border=True):
-            c1, c2, c3 = st.columns([3, 1.5, 1])
-            with c1:
-                st.markdown(f"**{row['assunto_nome']}**")
-                st.caption(f"{row.get('grande_area', 'Geral')} | {row['tipo']}")
-            with c2:
-                st.info(f"📅 {pd.to_datetime(row['data_agendada']).strftime('%d/%m/%Y')}")
-            with c3:
-                if row['status'] == 'Pendente':
-                    with st.popover("Confirmar"):
-                        q_t = st.number_input("Questões", 1, 100, 10, key=f"t_{row['id']}")
-                        q_a = st.number_input("Acertos", 0, q_t, 8, key=f"a_{row['id']}")
-                        if st.button("Finalizar", key=f"btn_{row['id']}", type="primary"):
-                            st.toast(concluir_revisao(row['id'], q_a, q_t))
-                            st.rerun()
+    def exibir_tabela_revisao(dataframe, chave_aba):
+        if dataframe.empty:
+            st.write("Nada por aqui! 😌")
+            return
+        
+        # Ordenar por data mais antiga primeiro
+        dataframe = dataframe.sort_values('data_agendada')
+        
+        for idx, row in dataframe.iterrows():
+            with st.container():
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    st.markdown(f"**{row['assunto_nome']}**")
+                    st.caption(f"📂 {row['grande_area']} | 🕒 {row['tipo']}")
+                
+                with col2:
+                    dt_str = row['data_agendada'].strftime('%d/%m/%Y')
+                    if row['data_agendada'] < hoje and row['status'] == 'Pendente':
+                        st.error(f"Atrasado: {dt_str}")
+                    else:
+                        st.info(dt_str)
+
+                with col3:
+                    if row['status'] == 'Pendente':
+                        # Form com inputs de acertos/total para a revisão
+                        with st.popover("Concluir"):
+                            ac = st.number_input("Acertos", 0, 100, 10, key=f"ac_{chave_aba}_{row['id']}")
+                            tot = st.number_input("Total", 1, 100, 10, key=f"tot_{chave_aba}_{row['id']}")
+                            if st.button("Confirmar", key=f"btn_{chave_aba}_{row['id']}"):
+                                res = concluir_revisao(row['id'], ac, tot)
+                                st.success(res)
+                                st.rerun()
+                    else:
+                        st.success("Concluído")
+                st.divider()
+
+    # Lógica de Filtragem
+    with aba_hoje:
+        df_hoje = df[(df['data_agendada'] == hoje) & (df['status'] == 'Pendente')]
+        exibir_tabela_revisao(df_hoje, "hoje")
+
+    with aba_pendentes:
+        df_atrasadas = df[(df['data_agendada'] < hoje) & (df['status'] == 'Pendente')]
+        exibir_tabela_revisao(df_atrasadas, "pend")
+
+    with aba_futuras:
+        df_futuras = df[(df['data_agendada'] > hoje) & (df['status'] == 'Pendente')]
+        exibir_tabela_revisao(df_futuras, "fut")
+
+    with aba_todas:
+        exibir_tabela_revisao(df, "todas")
