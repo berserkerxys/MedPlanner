@@ -8,7 +8,7 @@ def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # PRÉ-CARREGAMENTO
+    # LOADING
     loading = st.empty()
     with loading.container():
         st.markdown("<h3 style='text-align: center;'>🩺 Sincronizando Performance Médica...</h3>", unsafe_allow_html=True)
@@ -19,8 +19,8 @@ def render_dashboard(conn_ignored):
         time.sleep(0.3)
     loading.empty()
 
-    # 1. MISSÕES DIÁRIAS (LIVE)
-    st.subheader("🚀 Missões Ativas")
+    # 1. MISSÕES DIÁRIAS
+    st.subheader("🚀 Missões de Hoje")
     if not df_m.empty:
         cols = st.columns(3)
         for i, row in df_m.iterrows():
@@ -30,20 +30,21 @@ def render_dashboard(conn_ignored):
                     p = min(row['Prog'] / row['Objetivo'], 1.0) if row['Objetivo'] > 0 else 0
                     st.progress(p)
                     st.caption(f"{row['Prog']} / {row['Objetivo']} {row['Unid']}")
-                    if row['Prog'] >= row['Objetivo']: st.success("Meta Concluída!")
+                    if row['Prog'] >= row['Objetivo']: st.success("Batida!")
 
     st.divider()
 
-    # 2. ANÁLISE MULTIDIMENSIONAL (BLOQUEADA)
+    # 2. GRÁFICOS (DESIGN FIXED & CATEGORY BASED)
     if not df.empty:
         st.subheader("📈 Performance por Especialidade")
-        chart_config = {'staticPlot': True} # BLOQUEIA INTERAÇÃO ACIDENTAL
+        chart_config = {'staticPlot': True}
 
         def plot_pro(dataframe, col, chart_type='bar'):
             df_g = dataframe.groupby([col, 'area']).agg({'acertos':'sum', 'total':'sum'}).reset_index()
             df_g['%'] = (df_g['acertos'] / df_g['total'] * 100).round(1)
             
             if chart_type == 'line':
+                # PONTOS FORMANDO LINHAS (DIÁRIO)
                 fig = px.line(df_g, x=col, y='%', color='area', markers=True, line_shape="spline", color_discrete_sequence=px.colors.qualitative.Bold)
             else:
                 fig = px.bar(df_g, x=col, y='%', color='area', barmode='group', text_auto='.1f', color_discrete_sequence=px.colors.qualitative.Bold)
@@ -73,5 +74,3 @@ def render_dashboard(conn_ignored):
         m1.metric("Questões Totais", int(tq))
         m2.metric("Acertos Totais", int(ta))
         m3.metric("Média Geral", f"{(ta/tq*100 if tq>0 else 0):.1f}%")
-    else:
-        st.info("Registe os seus primeiros estudos para ver a evolução.")

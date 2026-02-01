@@ -7,10 +7,8 @@ from database import (
 )
 
 def render_sidebar():
-    """Barra lateral dedicada apenas a Ferramentas e Registos."""
     u = st.session_state.username
     nonce = st.session_state.data_nonce
-    
     status, _ = get_status_gamer(u, nonce)
     q_hoje = get_progresso_hoje(u, nonce)
     
@@ -34,14 +32,14 @@ def render_sidebar():
             st.progress(progresso)
             
             with st.expander("⚙️ Ajustar Meta"):
-                nova_meta = st.number_input("Objetivo:", 1, 500, meta)
-                if st.button("Salvar Meta"):
+                nova_meta = st.number_input("Objetivo Diário:", 1, 500, meta)
+                if st.button("Salvar Nova Meta"):
                     if update_meta_diaria(u, nova_meta):
                         st.success("Atualizado!")
                         st.rerun()
 
         st.divider()
-        st.markdown("📝 **Registar Atividade**")
+        st.markdown("📝 **Registar Estudo**")
         tipo = st.selectbox("O que fez?", ["Aula Tema", "Simulado Completo", "Banco Geral"], key="sb_type")
         
         if tipo == "Aula Tema":
@@ -67,7 +65,6 @@ def render_sidebar():
                     st.toast(registrar_simulado(u, res_sim))
 
         elif tipo == "Banco Geral":
-            st.caption("Registo de questões aleatórias (sem tema).")
             c1, c2 = st.columns(2)
             bg_acc = c1.number_input("Acertos", 0, 1000, 35)
             bg_tot = c2.number_input("Total", 1, 1000, 50)
@@ -75,6 +72,6 @@ def render_sidebar():
                 st.toast(registrar_estudo(u, "Banco Geral - Livre", bg_acc, bg_tot))
 
         st.divider()
-        if st.button("🚪 Sair", use_container_width=True):
+        if st.button("🚪 Logout", use_container_width=True):
             st.session_state.logado = False
             st.rerun()
