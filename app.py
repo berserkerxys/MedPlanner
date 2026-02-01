@@ -6,204 +6,120 @@ import time
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
 
-# Styling global para esconder o menu padrão e ajustar abas
+# CSS para estilo profissional
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {display: none;}
     .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 20px; border-bottom: 2px solid #f0f2f6; }
     .stTabs [data-baseweb="tab"] { font-size: 16px; font-weight: 600; }
-    
-    /* Estilo para a tela de login */
-    .login-container {
-        padding: 2rem;
-        border-radius: 10px;
-        background-color: #ffffff;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    .login-header {
-        text-align: center;
-        margin-bottom: 2rem;
-    }
+    .login-header { text-align: center; margin-bottom: 2rem; }
+    .stButton>button { border-radius: 8px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
-# Imports seguros com tratamento de erro
 _import_ok = True
 _import_exc = None
 try:
     import pandas as pd
     from datetime import datetime
     
-    # Imports locais
+    # Imports Locais
     from sidebar_v2 import render_sidebar
-    from database import get_resumo, salvar_resumo, verificar_login, criar_usuario, get_supabase, get_lista_assuntos_nativa
-    from perfil import render_perfil # Novo módulo de perfil
+    from database import verificar_login, criar_usuario, get_resumo, salvar_resumo
+    from perfil import render_perfil
+    from mentor import render_mentor
+    from simulado import render_simulado_real
+    from caderno_erros import render_caderno_erros
+    
 except Exception as e:
     _import_ok = False
     _import_exc = traceback.format_exc()
 
 if not _import_ok:
-    st.title("⛔ Erro ao iniciar a aplicação")
-    st.error("Falha na importação dos módulos. Verifique o log abaixo.")
+    st.error("Erro crítico na inicialização.")
     st.code(_import_exc)
     st.stop()
 
-# Inicialização de Sessão Segura
+# Inicialização de Estado
 if 'logado' not in st.session_state: st.session_state.logado = False
 if 'username' not in st.session_state: st.session_state.username = "guest"
-if 'u_nome' not in st.session_state: st.session_state.u_nome = "Doutor(a)"
+if 'u_nome' not in st.session_state: st.session_state.u_nome = "Visitante"
 if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
-# Função Auxiliar de Resumos (mantida no app principal por simplicidade)
-def render_resumos_ui(u):
-    try:
-        st.header("📝 Meus Resumos")
-        areas = ["Cirurgia", "Clínica Médica", "G.O.", "Pediatria", "Preventiva"]
-        
-        tab_areas = st.tabs(areas)
-        
-        for i, area in enumerate(areas):
-            with tab_areas[i]:
-                txt_val = get_resumo(u, area)
-                txt = st.text_area(f"Notas de {area}:", value=txt_val, height=400, key=f"t_{area}")
-                
-                c1, c2 = st.columns([1, 5])
-                with c1:
-                    if st.button(f"Salvar {area}", key=f"s_{area}", type="primary"):
-                        if salvar_resumo(u, area, txt): 
-                            st.toast("Resumo salvo com sucesso!", icon="✅")
-    except Exception:
-        st.error("Erro na UI de resumos")
-
-# --- APLICAÇÃO PRINCIPAL ---
 def app_principal():
     try:
-        u = st.session_state.username
-        
-        # Renderiza a Sidebar simplificada
         render_sidebar()
-
         st.markdown("<h2 style='text-align:center;'>🩺 MEDPLANNER PRO</h2>", unsafe_allow_html=True)
 
-        # Widget Pomodoro
+        # Pomodoro
         with st.expander("⏲️ Foco Pomodoro", expanded=False):
             c1, c2, c3 = st.columns([1, 2, 1])
             with c2:
                 mode = st.radio("Modo:", ["Estudo (25m)", "Pausa (5m)"], horizontal=True)
-                if st.button("🚀 Iniciar", key="pomodoro_start"):
-                    total_seconds = 25*60 if "Estudo" in mode else 5*60
-                    st.session_state._pomodoro_remaining = total_seconds
+                if st.button("🚀 Iniciar", key="pom_start"):
+                    st.session_state._pom_rem = 25*60 if "Estudo" in mode else 5*60
                     st.rerun()
+            if st.session_state.get("_pom_rem", 0) > 0:
+                m, s = divmod(st.session_state["_pom_rem"], 60)
+                st.markdown(f"<h1 style='text-align:center;'>{m:02d}:{s:02d}</h1>", unsafe_allow_html=True)
+                st.session_state["_pom_rem"] = max(0, st.session_state["_pom_rem"]-1)
+                time.sleep(1); st.rerun()
 
-            if st.session_state.get("_pomodoro_remaining", 0) > 0:
-                s = st.session_state["_pomodoro_remaining"]
-                m, sec = divmod(s, 60)
-                st.markdown(f"<h1 style='text-align:center;'>{m:02d}:{sec:02d}</h1>", unsafe_allow_html=True)
-                st.session_state["_pomodoro_remaining"] = max(0, s-1)
-                time.sleep(1)
-                st.rerun()
-
-        # Navegação Principal
-        abas = st.tabs(["📊 PERFORMANCE", "📅 AGENDA", "📚 VIDEOTECA", "📝 RESUMOS", "🗂️ CRONOGRAMA", "👤 PERFIL"])
+        # Abas Principais
+        abas = st.tabs([
+            "📊 DASHBOARD", "🤖 MENTOR IA", "🧠 CADERNO ERROS", "⏱️ SIMULADO", 
+            "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
+        ])
         
-        with abas[0]:
-            from dashboard import render_dashboard
-            render_dashboard(None)
-        with abas[1]:
-            from agenda import render_agenda
-            render_agenda(None)
-        with abas[2]:
-            from videoteca import render_videoteca
-            render_videoteca(None)
-        with abas[3]:
-            render_resumos_ui(u)
-        with abas[4]:
-            from cronograma import render_cronograma
-            render_cronograma(None)
-        with abas[5]:
-            # Aba dedicada ao Perfil e Conquistas
-            render_perfil(None)
+        with abas[0]: 
+            from dashboard import render_dashboard; render_dashboard(None)
+        with abas[1]: render_mentor(None)
+        with abas[2]: render_caderno_erros(None)
+        with abas[3]: render_simulado_real(None)
+        with abas[4]: 
+            from agenda import render_agenda; render_agenda(None)
+        with abas[5]: 
+            from videoteca import render_videoteca; render_videoteca(None)
+        with abas[6]: 
+            from cronograma import render_cronograma; render_cronograma(None)
+        with abas[7]: render_perfil(None)
 
     except Exception:
-        st.error("Erro crítico durante a execução do app")
-        st.code(traceback.format_exc())
+        st.error("Erro no app principal"); st.code(traceback.format_exc())
 
-# --- TELA DE LOGIN (PROFISSIONAL) ---
 def tela_login():
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Layout centralizado
     c1, c2, c3 = st.columns([1, 2, 1])
-    
     with c2:
-        # Cabeçalho da página de login
-        st.markdown("""
-            <div class='login-header'>
-                <h1>🩺 MedPlanner Elite</h1>
-                <p>Sua jornada rumo à aprovação começa aqui.</p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Container principal com abas
+        st.markdown("<div class='login-header'><h1>🩺 MedPlanner Elite</h1><p>Sua aprovação começa aqui.</p></div>", unsafe_allow_html=True)
         with st.container(border=True):
-            tab_login, tab_cadastro = st.tabs(["🔐 Entrar", "✨ Criar Conta"])
+            tab_login, tab_cad = st.tabs(["🔐 Entrar", "✨ Criar Conta"])
             
-            # --- ABA DE LOGIN ---
             with tab_login:
-                st.markdown("### Bem-vindo de volta!")
-                u = st.text_input("Usuário", key="login_user", placeholder="Seu nome de usuário")
-                p = st.text_input("Senha", type="password", key="login_pass", placeholder="Sua senha secreta")
-                
-                if st.button("Acessar Plataforma", type="primary", use_container_width=True):
-                    if not u or not p:
-                        st.warning("Por favor, preencha todos os campos.")
-                    else:
+                u = st.text_input("Usuário", key="l_user")
+                p = st.text_input("Senha", type="password", key="l_pass")
+                if st.button("Acessar", type="primary", use_container_width=True):
+                    if u and p:
                         ok, nome = verificar_login(u, p)
                         if ok:
                             st.session_state.logado = True
                             st.session_state.username = u
                             st.session_state.u_nome = nome
-                            st.toast(f"Bem-vindo, {nome}!", icon="👋")
-                            time.sleep(0.5)
                             st.rerun()
-                        else:
-                            st.error(f"Falha no login: {nome}")
+                        else: st.error(nome)
+                    else: st.warning("Preencha tudo.")
             
-            # --- ABA DE CADASTRO ---
-            with tab_cadastro:
-                st.markdown("### Novo por aqui?")
-                st.caption("Crie sua conta para começar a monitorar seus estudos.")
-                
-                new_u = st.text_input("Escolha um Usuário", key="new_user", placeholder="Ex: dr.silva")
-                new_n = st.text_input("Nome Completo", key="new_name", placeholder="Ex: João Silva")
-                new_p = st.text_input("Defina uma Senha", type="password", key="new_pass")
-                new_p2 = st.text_input("Confirme a Senha", type="password", key="new_pass2")
-                
-                if st.button("Cadastrar Gratuitamente", use_container_width=True):
-                    if not new_u or not new_n or not new_p:
-                        st.warning("Preencha todos os campos obrigatórios.")
-                    elif new_p != new_p2:
-                        st.error("As senhas não coincidem.")
-                    else:
-                        ok, msg = criar_usuario(new_u, new_p, new_n)
-                        if ok:
-                            st.success("Conta criada com sucesso! Faça login na aba 'Entrar'.")
-                            st.balloons()
-                        else:
-                            # Mensagem específica se o usuário já existir
-                            if "IntegrityError" in str(msg) or "UNIQUE constraint" in str(msg):
-                                st.error("Este nome de usuário já está em uso. Tente outro.")
-                            else:
-                                st.error(f"Erro ao criar conta: {msg}")
+            with tab_cad:
+                nu = st.text_input("Novo Usuário", key="n_user")
+                nn = st.text_input("Nome", key="n_name")
+                np = st.text_input("Senha", type="password", key="n_pass")
+                if st.button("Cadastrar", use_container_width=True):
+                    if nu and nn and np:
+                        ok, msg = criar_usuario(nu, np, nn)
+                        if ok: st.success("Criado! Faça login."); st.balloons()
+                        elif "UNIQUE" in str(msg) or "IntegrityError" in str(msg): st.error("Usuário já existe.")
+                        else: st.error(f"Erro: {msg}")
+                    else: st.warning("Preencha tudo.")
 
-        st.markdown("""
-            <div style='text-align: center; margin-top: 20px; color: #666;'>
-                <small>MedPlanner Elite © 2026 • Otimizando sua Residência Médica</small>
-            </div>
-        """, unsafe_allow_html=True)
-
-# Entry Point
-if st.session_state.logado:
-    app_principal()
-else:
-    tela_login()
+if st.session_state.logado: app_principal()
+else: tela_login()

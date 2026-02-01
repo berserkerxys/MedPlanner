@@ -1,5 +1,5 @@
 # database.py
-# Versão com Dados Pessoais (Email/Nascimento) e Migração Automática
+# Versão Final Completa: Suporte a todas as funcionalidades do MedPlanner Elite
 
 import os
 import json
@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 import bcrypt
+import random
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,8 +20,9 @@ except Exception:
 
 DB_NAME = "medplanner_local.db"
 
-# --- 1. NORMALIZAÇÃO ---
+# --- 1. NORMALIZAÇÃO DE ÁREAS ---
 def normalizar_area(nome):
+    """Padroniza os nomes para evitar duplicidade nos gráficos."""
     if not nome: return "Geral"
     n_upper = str(nome).strip().upper()
     mapeamento = {
@@ -75,46 +77,39 @@ def trigger_refresh():
 def _ensure_local_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # Tabelas Core
+    
+    # Tabelas Principais
     c.execute("CREATE TABLE IF NOT EXISTS historico (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, area_manual TEXT, data_estudo TEXT, acertos INTEGER, total INTEGER)")
     c.execute("CREATE TABLE IF NOT EXISTS revisoes (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, grande_area TEXT, data_agendada TEXT, tipo TEXT, status TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS perfil_gamer (usuario_id TEXT PRIMARY KEY, xp INTEGER, titulo TEXT, meta_diaria INTEGER)")
-    c.execute("CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, nome TEXT, password_hash TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, nome TEXT, password_hash TEXT, email TEXT, data_nascimento TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
     c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
     
-    # MIGRAÇÃO: Adiciona colunas novas se não existirem (SQLite não suporta IF NOT EXISTS em ADD COLUMN facilmente, então usamos try/except)
-    try: 
-        c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+    # Migrações Automáticas (Caso colunas novas não existam)
+    try: c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
     except: pass
-    try: 
-        c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
+    try: c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
     except: pass
     
     conn.commit()
     conn.close()
 
-# --- 4. GESTÃO DE DADOS PESSOAIS (NOVO) ---
+# --- 4. GESTÃO DE DADOS PESSOAIS ---
 def get_dados_pessoais(u):
-    """Retorna dicionário com email e nascimento."""
     client = get_supabase()
     dados = {"email": "", "nascimento": None}
-    
     try:
         if client:
             res = client.table("usuarios").select("email, data_nascimento").eq("username", u).execute()
             if res.data:
-                d = res.data[0]
-                dados["email"] = d.get("email") or ""
-                dados["nascimento"] = d.get("data_nascimento")
+                dados["email"] = res.data[0].get("email") or ""
+                dados["nascimento"] = res.data[0].get("data_nascimento")
         else:
             _ensure_local_db()
             with sqlite3.connect(DB_NAME) as conn:
-                # Usa row_factory para facilitar
                 conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute("SELECT email, data_nascimento FROM usuarios WHERE username=?", (u,))
-                row = cur.fetchone()
+                row = conn.execute("SELECT email, data_nascimento FROM usuarios WHERE username=?", (u,)).fetchone()
                 if row:
                     dados["email"] = row["email"] or ""
                     dados["nascimento"] = row["data_nascimento"]
@@ -122,7 +117,6 @@ def get_dados_pessoais(u):
     return dados
 
 def update_dados_pessoais(u, email, nascimento_str):
-    """Salva email e data de nascimento (formato YYYY-MM-DD)."""
     client = get_supabase()
     try:
         if client:
@@ -134,7 +128,57 @@ def update_dados_pessoais(u, email, nascimento_str):
         return True
     except: return False
 
-# --- 5. PERSISTÊNCIA CRONOGRAMA ---
+# --- 5. BENCHMARK (COMPARATIVO) ---
+def get_benchmark_dados(u, df_usuario):
+    areas = ["Cirurgia", "Clínica Médica", "Ginecologia e Obstetrícia", "Pediatria", "Preventiva"]
+    dados = []
+    stats_user = {a: 0 for a in areas}
+
+    if not df_usuario.empty:
+        if 'area' not in df_usuario.columns:
+            if 'area_manual' in df_usuario.columns: df_usuario['area'] = df_usuario['area_manual'].apply(normalizar_area)
+            else: df_usuario['area'] = "Geral"
+        
+        grupo = df_usuario.groupby('area').agg({'acertos': 'sum', 'total': 'sum'})
+        for area in areas:
+            if area in grupo.index:
+                ac, tt = grupo.loc[area, 'acertos'], grupo.loc[area, 'total']
+                stats_user[area] = (ac / tt * 100) if tt > 0 else 0
+
+    # Dados da Comunidade (Simulados para Demo)
+    stats_comunidade = {"Cirurgia": 65, "Clínica Médica": 62, "Ginecologia e Obstetrícia": 70, "Pediatria": 72, "Preventiva": 75}
+
+    for area in areas:
+        dados.append({"Area": area, "Tipo": "Você", "Performance": stats_user[area]})
+        dados.append({"Area": area, "Tipo": "Comunidade", "Performance": stats_comunidade[area]})
+    
+    return pd.DataFrame(dados)
+
+# --- 6. CADERNO DE ERROS ---
+def get_caderno_erros(u, area):
+    client = get_supabase()
+    try:
+        if client:
+            res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
+            return res.data[0]['conteudo'] if res.data else ""
+        _ensure_local_db()
+        with sqlite3.connect(DB_NAME) as conn:
+            row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
+            return row[0] if row else ""
+    except: return ""
+
+def salvar_caderno_erros(u, area, texto):
+    client = get_supabase()
+    try:
+        if client: client.table("resumos").upsert({"usuario_id": u, "grande_area": area, "conteudo": texto}).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", (u, area, texto))
+        return True
+    except: return False
+
+# --- 7. PERSISTÊNCIA CRONOGRAMA ---
 def get_cronograma_status(usuario_id):
     client = get_supabase()
     try:
@@ -146,11 +190,8 @@ def get_cronograma_status(usuario_id):
             return {}
         _ensure_local_db()
         with sqlite3.connect(DB_NAME) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT estado_json FROM cronogramas WHERE usuario_id=?", (usuario_id,))
-            row = cur.fetchone()
-            if row and row[0]: return json.loads(row[0])
-        return {}
+            row = conn.execute("SELECT estado_json FROM cronogramas WHERE usuario_id=?", (usuario_id,)).fetchone()
+            return json.loads(row[0]) if row and row[0] else {}
     except: return {}
 
 def salvar_cronograma_status(usuario_id, estado_dict):
@@ -169,7 +210,7 @@ def salvar_cronograma_status(usuario_id, estado_dict):
         return True
     except: return False
 
-# --- 6. REGISTROS ---
+# --- 8. REGISTROS ---
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     area = normalizar_area(area_f if area_f else get_area_por_assunto(assunto))
@@ -204,7 +245,7 @@ def registrar_simulado(u, dados):
         if int(d['total']) > 0: registrar_estudo(u, f"Simulado - {area}", d['acertos'], d['total'], area_f=normalizar_area(area), srs=False)
     return "✅ Simulado Salvo!"
 
-# --- 7. PERFORMANCE ---
+# --- 9. PERFORMANCE ---
 def get_dados_graficos(u, nonce=None):
     client = get_supabase()
     if client:
@@ -221,7 +262,7 @@ def get_dados_graficos(u, nonce=None):
         df['total'] = df['total'].astype(int); df['acertos'] = df['acertos'].astype(int)
     return df
 
-# --- 8. SRS E AUTH ---
+# --- 10. SRS AUTOMÁTICO (REAGENDAMENTO) ---
 def listar_revisoes_completas(u, n=None):
     client = get_supabase()
     if client:
@@ -234,7 +275,6 @@ def concluir_revisao(rid, ac, tot):
     srs_map = {"1 Semana": ("1 Mês", 30), "1 Mês": ("2 Meses", 60), "2 Meses": ("4 Meses", 120)}
     client = get_supabase()
     
-    # Lógica unificada para evitar repetição (abstração simples)
     if client:
         r = client.table("revisoes").select("*").eq("id", rid).execute()
         if not r.data: return "Erro"
@@ -242,13 +282,9 @@ def concluir_revisao(rid, ac, tot):
         client.table("revisoes").update({"status": "Concluido"}).eq("id", rid).execute()
     else:
         _ensure_local_db()
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM revisoes WHERE id=?", (rid,))
-        rev = cur.fetchone()
-        cur.execute("UPDATE revisoes SET status='Concluido' WHERE id=?", (rid,))
-        conn.commit()
+        conn = sqlite3.connect(DB_NAME); conn.row_factory = sqlite3.Row
+        cur = conn.cursor(); cur.execute("SELECT * FROM revisoes WHERE id=?", (rid,)); rev = cur.fetchone()
+        cur.execute("UPDATE revisoes SET status='Concluido' WHERE id=?", (rid,)); conn.commit()
 
     if rev:
         registrar_estudo(rev['usuario_id'], rev['assunto_nome'], ac, tot, area_f=rev['grande_area'], srs=False)
@@ -257,15 +293,14 @@ def concluir_revisao(rid, ac, tot):
             prox, dias = srs_map[tipo]
             dt = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
             
-            if client:
-                client.table("revisoes").insert({"usuario_id": rev['usuario_id'], "assunto_nome": rev['assunto_nome'], "grande_area": rev['grande_area'], "data_agendada": dt, "tipo": prox, "status": "Pendente"}).execute()
-            else:
-                cur.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", (rev['usuario_id'], rev['assunto_nome'], rev['grande_area'], dt, prox, "Pendente"))
-                conn.commit()
+            if client: client.table("revisoes").insert({"usuario_id": rev['usuario_id'], "assunto_nome": rev['assunto_nome'], "grande_area": rev['grande_area'], "data_agendada": dt, "tipo": prox, "status": "Pendente"}).execute()
+            else: 
+                with sqlite3.connect(DB_NAME) as c: c.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", (rev['usuario_id'], rev['assunto_nome'], rev['grande_area'], dt, prox, "Pendente"))
             return f"✅ Próxima em {dias}d ({prox})"
         return "✅ Ciclo Finalizado!"
     return "Erro"
 
+# --- 11. GAMIFICAÇÃO & CONQUISTAS ---
 def update_meta_diaria(u, nova):
     client = get_supabase()
     if client:
@@ -279,7 +314,6 @@ def update_meta_diaria(u, nova):
     trigger_refresh()
 
 def get_conquistas_e_stats(u):
-    # (Mantido igual à versão anterior, apenas recalculando para contexto)
     client = get_supabase()
     total_q = 0
     if client:
@@ -323,12 +357,10 @@ def get_status_gamer(u, nonce=None):
             h_row = conn.execute("SELECT sum(total), sum(acertos) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
             q, a = (h_row[0] or 0), (h_row[1] or 0)
     
-    # Título dinâmico
-    titulo = "Interno"
     q_total, _, _ = get_conquistas_e_stats(u)
-    if q_total > 2000: titulo = "Residente R1"
-    if q_total > 10000: titulo = "Residente R3"
-    if q_total > 15000: titulo = "Staff"
+    titulo = "Interno"
+    if q_total > 2000: titulo = "R1"
+    if q_total > 10000: titulo = "R3"
     if q_total > 20000: titulo = "Chefe"
 
     status = {'nivel': 1 + (xp // 1000), 'xp_atual': xp % 1000, 'xp_total': xp, 'meta_diaria': meta, 'titulo': titulo}
@@ -339,24 +371,37 @@ def get_progresso_hoje(u, nonce=None):
     _, df_m = get_status_gamer(u, nonce)
     return df_m.iloc[0]['Prog'] if not df_m.empty else 0
 
+# --- 12. AUTH ---
 def verificar_login(u, p):
     client = get_supabase()
     if client:
         res = client.table("usuarios").select("password_hash, nome").eq("username", u).execute()
         if res.data and bcrypt.checkpw(p.encode(), res.data[0]['password_hash'].encode()):
             return True, res.data[0]['nome']
-    return False, "Erro Login"
+    else:
+        _ensure_local_db()
+        with sqlite3.connect(DB_NAME) as conn:
+            row = conn.execute("SELECT password_hash, nome FROM usuarios WHERE username=?", (u,)).fetchone()
+            if row and bcrypt.checkpw(p.encode(), row[0].encode()): return True, row[1]
+            
+    return False, "Credenciais inválidas"
 
 def criar_usuario(u, p, n):
     client = get_supabase()
-    if client:
+    try:
         pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
-        client.table("usuarios").insert({"username": u, "nome": n, "password_hash": pw}).execute()
-        return True, "Criado!"
-    return False, "Erro"
+        if client:
+            client.table("usuarios").insert({"username": u, "nome": n, "password_hash": pw}).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("INSERT INTO usuarios (username, nome, password_hash) VALUES (?,?,?)", (u, n, pw))
+        return True, "OK"
+    except Exception as e: return False, str(e)
 
-def get_resumo(u, area): return ""
-def salvar_resumo(u, area, texto): return True
+# Aliases
+def get_resumo(u, a): return get_caderno_erros(u, a)
+def salvar_resumo(u, a, t): return salvar_caderno_erros(u, a, t)
 def listar_conteudo_videoteca(): return pd.DataFrame()
-def pesquisar_global(termo): return pd.DataFrame()
+def pesquisar_global(t): return pd.DataFrame()
 def get_db(): return True
