@@ -1,74 +1,78 @@
 import streamlit as st
-import plotly.express as px
 import pandas as pd
-import time
+import plotly.express as px
 from database import get_status_gamer, get_dados_graficos, listar_conteudo_videoteca
+
+def plot_pro(dataframe, col, tipo='bar'):
+    # --- CORREÇÃO DO ERRO KeyError: 'area' ---
+    # Garante que a coluna 'area' exista e não tenha valores nulos
+    if 'area' not in dataframe.columns:
+        if 'area_manual' in dataframe.columns:
+            dataframe['area'] = dataframe['area_manual'].fillna("Geral")
+        else:
+            dataframe['area'] = "Geral"
+    
+    dataframe['area'] = dataframe['area'].replace("", "Geral").fillna("Geral")
+    # ------------------------------------------
+
+    df_g = dataframe.groupby([col, 'area']).agg({'acertos':'sum', 'total':'sum'}).reset_index()
+    df_g['Perc'] = (df_g['acertos'] / df_g['total'] * 100).round(1)
+    
+    if tipo == 'line':
+        fig = px.line(df_g, x=col, y='Perc', color='area', markers=True, template="plotly_white")
+    else:
+        fig = px.bar(df_g, x=col, y='total', color='area', barmode='group', template="plotly_white")
+    
+    fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), height=300)
+    return fig
 
 def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    loading = st.empty()
-    with loading.container():
-        st.markdown("<h3 style='text-align: center;'>🩺 Sincronizando Performance Médica...</h3>", unsafe_allow_html=True)
-        pb = st.progress(0)
-        status, df_m = get_status_gamer(u, nonce); pb.progress(40)
-        df = get_dados_graficos(u, nonce); pb.progress(80)
-        listar_conteudo_videoteca(); pb.progress(100)
-        time.sleep(0.3)
-    loading.empty()
-
-    # 1. MISSÕES DIÁRIAS
-    st.subheader("🚀 Missões de Hoje")
-    if not df_m.empty:
-        cols = st.columns(3)
-        for i, row in df_m.iterrows():
+    # 1. Dados de Gamificação
+    status, missoes = get_status_gamer(u, nonce)
+    
+    if status:
+        c1, c2, c3 = st.columns([1, 1, 2])
+        c1.metric("Nível", f"{status['nivel']}")
+        c2.metric("XP Total", f"{status['xp_total']}")
+        c3.markdown(f"### 🏆 Título: {status['titulo']}")
+        
+        st.write("---")
+        st.subheader("🚀 Missões Diárias")
+        cols = st.columns(len(missoes))
+        for i, row in missoes.iterrows():
             with cols[i]:
-                with st.container(border=True):
-                    st.markdown(f"**{row['Icon']} {row['Meta']}**")
-                    p = min(row['Prog'] / row['Objetivo'], 1.0) if row['Objetivo'] > 0 else 0
-                    st.progress(p)
-                    st.caption(f"{row['Prog']} / {row['Objetivo']} {row['Unid']}")
+                prog = min(row['Prog'] / row['Objetivo'], 1.0) if row['Objetivo'] > 0 else 0
+                st.write(f"{row['Icon']} **{row['Meta']}**")
+                st.progress(prog)
+                st.caption(f"{row['Prog']} / {row['Objetivo']} {row['Unid']}")
 
-    st.divider()
-
-    # 2. GRÁFICOS (DESIGN FIXED & CATEGORY BASED)
+    st.write("---")
+    
+    # 2. Gráficos de Performance
+    df = get_dados_graficos(u, nonce)
+    
     if not df.empty:
-        st.subheader("📈 Performance Médica")
-        chart_config = {'staticPlot': True}
-
-        def plot_pro(dataframe, col, chart_type='bar'):
-            df_g = dataframe.groupby([col, 'area']).agg({'acertos':'sum', 'total':'sum'}).reset_index()
-            df_g['%'] = (df_g['acertos'] / df_g['total'] * 100).round(1)
-            
-            if chart_type == 'line':
-                # PONTOS FORMANDO LINHAS (DIÁRIO)
-                fig = px.line(df_g, x=col, y='%', color='area', markers=True, line_shape="spline", color_discrete_sequence=px.colors.qualitative.Bold)
-            else:
-                fig = px.bar(df_g, x=col, y='%', color='area', barmode='group', text_auto='.1f', color_discrete_sequence=px.colors.qualitative.Bold)
-            
-            fig.update_layout(
-                yaxis_range=[0, 105], template="plotly_white", height=400, 
-                margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h", y=1.1, x=0),
-                xaxis=dict(type='category') # REMOVE MILISSEGUNDOS
-            )
-            return fig
-
-        tabs = st.tabs(["📅 Diário", "🗓️ Semanal", "📊 Mensal"])
-        with tabs[0]:
-            df['dia'] = pd.to_datetime(df['data']).dt.strftime('%d/%m')
+        # Criar coluna de dia formatado para o gráfico
+        df['dia'] = df['data'].dt.strftime('%d/%m')
+        
+        chart_config = {'displayModeBar': False}
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📈 Evolução (% Acertos)")
+            # Pegamos os últimos 30 registros para não poluir o gráfico
             st.plotly_chart(plot_pro(df.tail(30), 'dia', 'line'), use_container_width=True, config=chart_config)
-        with tabs[1]:
-            df['semana'] = pd.to_datetime(df['data']).dt.to_period('W').apply(lambda r: r.start_time.strftime('%d/%m'))
-            st.plotly_chart(plot_pro(df, 'semana'), use_container_width=True, config=chart_config)
-        with tabs[2]:
-            df['mes'] = pd.to_datetime(df['data']).dt.strftime('%m/%Y')
-            st.plotly_chart(plot_pro(df, 'mes'), use_container_width=True, config=chart_config)
-
-        # KPIs
-        st.divider()
-        m1, m2, m3 = st.columns(3)
-        tq, ta = df['total'].sum(), df['acertos'].sum()
-        m1.metric("Questões", int(tq))
-        m2.metric("Acertos", int(ta))
-        m3.metric("Média Geral", f"{(ta/tq*100 if tq>0 else 0):.1f}%")
+            
+        with col2:
+            st.subheader("📊 Volume por Área")
+            st.plotly_chart(plot_pro(df.tail(30), 'dia', 'bar'), use_container_width=True, config=chart_config)
+            
+        # Tabela Detalhada
+        with st.expander("📄 Ver histórico completo"):
+            st.dataframe(df.sort_values('data', ascending=False), use_container_width=True)
+    else:
+        st.info("Ainda não há dados suficientes para gerar os gráficos. Comece a registrar seus estudos na barra lateral!")
