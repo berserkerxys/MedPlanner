@@ -6,7 +6,7 @@ from sidebar_v2 import render_sidebar
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
 
-# CSS Elite
+# CSS para estabilidade e Pomodoro
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {display: none;}
@@ -23,7 +23,7 @@ def tela_login():
     c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
         st.markdown("<h1 style='text-align:center;'>🩺 MedPlanner</h1>", unsafe_allow_html=True)
-        t1, t2 = st.tabs(["Acesso", "Cadastro"])
+        t1, t2 = st.tabs(["Entrar", "Novo Registro"])
         with t1:
             with st.form("login_f"):
                 u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
@@ -32,7 +32,7 @@ def tela_login():
                     if ok:
                         st.session_state.logado, st.session_state.username, st.session_state.u_nome = True, u, res
                         st.rerun()
-                    else: st.error("Login inválido.")
+                    else: st.error("Acesso Negado.")
         with t2:
             with st.form("reg_f"):
                 nu, nn, np = st.text_input("ID"), st.text_input("Nome"), st.text_input("Senha", type="password")
@@ -41,13 +41,13 @@ def tela_login():
                     st.success(m) if ok else st.error(m)
 
 def app_principal():
-    # 1. SIDEBAR (CONTROLE)
+    # 1. BARRA LATERAL (CONTROLE)
     menu = render_sidebar()
     
     # 2. TOPO E POMODORO
     st.markdown(f"<h2 class='main-title'>Bem-vindo, Dr. {st.session_state.u_nome}</h2>", unsafe_allow_html=True)
     
-    with st.expander("⏲️ Ferramenta Pomodoro", expanded=False):
+    with st.expander("⏲️ Cronómetro Pomodoro", expanded=False):
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             st.markdown("<div class='pomodoro-box'>", unsafe_allow_html=True)
@@ -80,7 +80,7 @@ def app_principal():
 def render_perfil():
     from database import get_status_gamer
     status, _ = get_status_gamer(st.session_state.username, st.session_state.data_nonce)
-    st.header("👤 Perfil Profissional")
+    st.header("👤 Área do Aluno")
     if status:
         c1, c2 = st.columns([1, 2])
         c1.markdown("<h1 style='font-size: 100px; text-align: center;'>👨‍⚕️</h1>", unsafe_allow_html=True)
@@ -89,7 +89,6 @@ def render_perfil():
                 st.subheader(st.session_state.u_nome)
                 st.markdown(f"**Título:** {status['titulo']}")
                 st.markdown(f"**Nível:** {status['nivel']}")
-                st.markdown(f"**Meta Atual:** {status['meta_diaria']} q/dia")
                 st.markdown(f"**XP Total:** {status['xp_total']} pts")
                 st.progress(status['xp_atual']/1000, text=f"{status['xp_atual']} / 1000")
 

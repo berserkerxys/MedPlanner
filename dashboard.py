@@ -19,33 +19,32 @@ def render_dashboard(conn_ignored):
         time.sleep(0.3)
     loading.empty()
 
-    # 1. CABEÇALHO
+    # 1. CABEÇALHO E MISSÕES
     if status:
         st.markdown(f"### 🏆 {status['titulo']} - Nível {status['nivel']}")
         st.progress(status['xp_atual'] / 1000, text=f"XP: {status['xp_atual']} / 1000")
 
     st.divider()
 
-    # 2. ANÁLISE MULTIDIMENSIONAL (FIXA/ESTÁTICA)
+    # 2. ANÁLISE MULTIDIMENSIONAL (ESPECIALIDADE X TEMPO)
     if not df.empty:
-        st.subheader("📈 Desempenho por Período e Área Médica")
-        
-        tab_dia, tab_sem, tab_mes = st.tabs(["📅 Diário", "🗓️ Semanal", "📊 Mensal"])
+        st.subheader("📈 Performance por Especialidade e Período")
+        t_dia, t_sem, t_mes = st.tabs(["📅 Diário", "🗓️ Semanal", "📊 Mensal"])
 
-        # Configuração para BLOQUEAR interação (sem zoom, sem pan, sem clique alternando)
+        # Configuração para BLOQUEAR interação (estático)
         chart_config = {'staticPlot': True}
 
         def plot_area_pro(dataframe, period_col, chart_type='bar'):
-            # Agrupar explicitamente para evitar zoom excessivo no eixo X
-            df_grouped = dataframe.groupby([period_col, 'area']).agg({'acertos':'sum', 'total':'sum'}).reset_index()
-            df_grouped['%'] = (df_grouped['acertos'] / df_grouped['total'] * 100).round(1)
+            # Agrupar por período e área médica
+            df_g = dataframe.groupby([period_col, 'area']).agg({'acertos':'sum', 'total':'sum'}).reset_index()
+            df_g['%'] = (df_g['acertos'] / df_g['total'] * 100).round(1)
             
             if chart_type == 'line':
-                # Gráfico de pontos formando linhas para evolução diária
-                fig = px.line(df_grouped, x=period_col, y='%', color='area', markers=True,
+                # Visão agradável de pontos formando linhas conforme pedido
+                fig = px.line(df_g, x=period_col, y='%', color='area', markers=True, 
                              line_shape="spline", color_discrete_sequence=px.colors.qualitative.Bold)
             else:
-                fig = px.bar(df_grouped, x=period_col, y='%', color='area', barmode='group',
+                fig = px.bar(df_g, x=period_col, y='%', color='area', barmode='group', 
                             text_auto='.1f', color_discrete_sequence=px.colors.qualitative.Bold)
             
             fig.update_layout(
@@ -59,8 +58,8 @@ def render_dashboard(conn_ignored):
             )
             return fig
 
-        with tab_dia:
-            # Pegar os últimos 15 dias para o gráfico não ficar esmagado
+        with t_dia:
+            # Mostra os últimos 15 dias de estudo para uma visão agradável
             df_day = df.copy()
             df_day['data_dia'] = df_day['data'].dt.date
             recent_days = sorted(df_day['data_dia'].unique())[-15:]
@@ -69,12 +68,12 @@ def render_dashboard(conn_ignored):
             st.plotly_chart(plot_area_pro(df_recent, 'data_dia', 'line'), 
                            use_container_width=True, config=chart_config)
 
-        with tab_sem:
+        with t_sem:
             df['semana'] = df['data'].dt.to_period('W').apply(lambda r: r.start_time)
             st.plotly_chart(plot_area_pro(df, 'semana'), 
                            use_container_width=True, config=chart_config)
 
-        with tab_mes:
+        with t_mes:
             df['mes'] = df['data'].dt.strftime('%m/%Y')
             st.plotly_chart(plot_area_pro(df, 'mes'), 
                            use_container_width=True, config=chart_config)
@@ -86,6 +85,5 @@ def render_dashboard(conn_ignored):
         m1.metric("Total de Questões", t_q)
         m2.metric("Acertos Totais", t_a)
         m3.metric("Média Geral", f"{(t_a/t_q*100 if t_q>0 else 0):.1f}%")
-
     else:
-        st.info("Registre seus primeiros estudos para visualizar a sua evolução.")
+        st.info("Registre estudos para visualizar a sua evolução.")

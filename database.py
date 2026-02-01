@@ -4,7 +4,7 @@ import bcrypt
 import streamlit as st
 from supabase import create_client, Client
 
-# --- CONEXÃO SUPABASE ---
+# --- CONEXÃO SUPABASE (ESTÁVEL) ---
 @st.cache_resource
 def get_supabase() -> Client:
     try:
@@ -41,7 +41,7 @@ def get_lista_assuntos_nativa():
     return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Banco Geral"]
 
 def pesquisar_global(termo):
-    """Necessário para videoteca.py evitar ImportError"""
+    """Resolve o ImportError na videoteca.py"""
     df = listar_conteudo_videoteca()
     if df.empty: return df
     mask = df['titulo'].str.contains(termo, case=False, na=False) | df['assunto'].str.contains(termo, case=False, na=False)
@@ -86,8 +86,8 @@ def get_status_gamer(u, nonce):
         a = sum([int(i['acertos']) for i in h.data]) if h.data else 0
         
         missoes = [
-            {"Icon": "🎯", "Meta": "Meta Diária", "Prog": q, "Objetivo": meta, "Unid": "q"},
-            {"Icon": "🔥", "Meta": "Foco XP", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
+            {"Icon": "🎯", "Meta": "Objetivo Diário", "Prog": q, "Objetivo": meta, "Unid": "q"},
+            {"Icon": "🔥", "Meta": "XP Diário", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
         ]
         return status, pd.DataFrame(missoes)
     except: return None, pd.DataFrame()
@@ -101,7 +101,7 @@ def update_meta_diaria(u, nova_meta):
     except: return False
 
 # ==========================================
-# 📝 REGISTROS (CORREÇÃO DE SIMULADOS)
+# 📝 REGISTROS E ANALYTICS
 # ==========================================
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
     client = get_supabase()
@@ -117,14 +117,14 @@ def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=T
             dt_rev = (dt + timedelta(days=7)).strftime("%Y-%m-%d")
             client.table("revisoes").insert({"usuario_id": u, "assunto_nome": assunto, "grande_area": area, "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"}).execute()
         
-        # Incrementar XP
+        # XP
         res_p = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
         if res_p.data:
             nxp = int(res_p.data[0]['xp']) + (int(total) * 2)
             client.table("perfil_gamer").update({"xp": nxp}).eq("usuario_id", u).execute()
             
         trigger_refresh()
-        return "✅ Registrado!"
+        return "✅ Registado!"
     except: return "Erro"
 
 def registrar_simulado(u, dados, data_p=None):
@@ -154,13 +154,13 @@ def get_dados_graficos(u, nonce):
         df['total'] = df['total'].astype(int)
         df['acertos'] = df['acertos'].astype(int)
         df['percentual'] = (df['acertos'] / df['total'] * 100).round(1)
-        # Forçar conversão para data sem hora para evitar problemas de zoom no Plotly
+        # Normalização de data para o dia (remove horas/minutos para o gráfico ficar limpo)
         df['data'] = pd.to_datetime(df['data_estudo']).dt.normalize()
         return df.sort_values('data')
     except: return pd.DataFrame()
 
 # ==========================================
-# 🔐 AUTH E AGENDA
+# 🔐 LOGIN E AGENDA
 # ==========================================
 def verificar_login(u, p):
     client = get_supabase()
@@ -182,7 +182,7 @@ def criar_usuario(u, p, n):
     except: return False, "Usuário já existe"
 
 def listar_revisoes_completas(u, n):
-    """Necessário para agenda.py"""
+    """Resolve o ImportError na agenda.py"""
     client = get_supabase()
     try:
         res = client.table("revisoes").select("*").eq("usuario_id", u).execute()
@@ -190,7 +190,7 @@ def listar_revisoes_completas(u, n):
     except: return pd.DataFrame()
 
 def concluir_revisao(rid, ac, tot):
-    """Necessário para agenda.py"""
+    """Resolve o ImportError na agenda.py"""
     client = get_supabase()
     try:
         res = client.table("revisoes").select("*").eq("id", rid).execute()
@@ -199,5 +199,3 @@ def concluir_revisao(rid, ac, tot):
         registrar_estudo(rev['usuario_id'], rev['assunto_nome'], ac, tot, area_f=rev.get('grande_area'), srs=False)
         return "✅ Concluído"
     except: return "Erro"
-
-def get_db(): return True
