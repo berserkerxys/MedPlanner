@@ -1,82 +1,41 @@
 import streamlit as st
 import pandas as pd
-from database import listar_conteudo_videoteca, excluir_conteudo, registrar_estudo, pesquisar_global
+from database import listar_conteudo_videoteca, registrar_estudo, pesquisar_global
 
 def render_videoteca(conn_ignored):
-    st.subheader("📚 Videoteca & Materiais")
+    st.subheader("📚 Videoteca Master")
     
-    # 🔍 BARRA DE PESQUISA
-    c_busca, c_stats = st.columns([3, 1])
-    termo_busca = c_busca.text_input("🔍 Pesquisar aula ou material...", placeholder="Ex: Apendicite, Asma...")
+    # Barra de Pesquisa
+    termo = st.text_input("🔍 Pesquisar material...", placeholder="Ex: Pneumonia, Diabetes...", key="search_vid")
     
-    if termo_busca:
-        # MODO PESQUISA (Global)
-        st.caption(f"Resultados para: **'{termo_busca}'**")
-        df = pesquisar_global(termo_busca)
-        if df.empty:
-            st.warning("😕 Nada encontrado.")
-            return
-        renderizar_lista_de_cards(df)
-        
+    if termo:
+        df = pesquisar_global(termo)
     else:
-        # MODO NAVEGAÇÃO (Pastas)
-        df_full = listar_conteudo_videoteca()
-        
-        if df_full.empty:
-            st.info("Videoteca vazia.")
-            return
+        df = listar_conteudo_videoteca()
 
-        areas = df_full['grande_area'].unique()
-        area_filtro = st.pills("Filtrar Área:", areas)
-        
-        if not area_filtro:
-            st.info("👆 Selecione uma área ou pesquise acima.")
-            return
+    if df.empty:
+        st.info("Nenhum material encontrado no arquivo biblioteca_conteudo.py")
+        return
 
-        df_area = df_full[df_full['grande_area'] == area_filtro]
-        assuntos = df_area['assunto'].unique()
+    # Filtros por Área
+    areas = ["Todas"] + sorted(df['grande_area'].unique().tolist())
+    escolha_area = st.pills("Grande Área:", areas, selection_mode="single", default="Todas", key="pills_area")
 
-        for assunto in assuntos:
-            with st.expander(f"🔹 {assunto}", expanded=False):
-                df_items = df_area[df_area['assunto'] == assunto]
-                renderizar_lista_de_cards(df_items)
+    if escolha_area != "Todas":
+        df = df[df['grande_area'] == escolha_area]
 
-def renderizar_lista_de_cards(df):
-    u = st.session_state.username # Necessário para registrar estudo
-    
-    # MATERIAIS
-    materiais = df[df['tipo'] == 'Material']
-    if not materiais.empty:
-        st.markdown("###### 📄 Materiais")
-        for _, row in materiais.iterrows():
-            icon = "⭐" if row['subtipo'] == "Ficha" else "📎"
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([0.1, 0.8, 0.1])
-                c1.write(icon)
-                c2.markdown(f"[{row['titulo']}]({row['link']})")
-                if c3.button("🗑️", key=f"del_m_{row['id']}"):
-                    excluir_conteudo(row['id']); st.rerun()
-
-    # VÍDEOS
-    videos = df[df['tipo'] == 'Video']
-    if not videos.empty:
-        st.markdown("###### 🎥 Aulas")
-        for _, row in videos.iterrows():
-            label = "⏱️ Rápido" if row['subtipo'] == "Curto" else "📽️ Aula"
-            cor_btn = "primary" if row['subtipo'] == "Longo" else "secondary"
-            
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 1.2, 0.5])
-                with c1:
-                    st.write(f"**{row['titulo']}**")
-                    if 'grande_area' in row: st.caption(f"📌 {row['grande_area']}")
-                with c2:
-                    st.link_button(label, row['link'], use_container_width=True, type=cor_btn)
-                with c3:
-                    with st.popover("⋮"):
-                        if st.button("✅ Concluir", key=f"ok_{row['id']}", use_container_width=True):
-                            registrar_estudo(u, row['assunto'], 1, 1) # Registra presença simbólica
-                            st.toast("Estudo Registrado!")
-                        st.divider()
-                        if st.button("🗑️ Excluir", key=f"del_v_{row['id']}", use_container_width=True):
-                            excluir_conteudo(row['id']); st.rerun()
+    # Agrupar por Assunto
+    assuntos = df['assunto'].unique()
+    for ass in assuntos:
+        with st.expander(f"🔹 {ass}", expanded=False):
+            items = df[df['assunto'] == ass]
+            for _, row in items.iterrows():
+                col_info, col_btn = st.columns([3, 1])
+                with col_info:
+                    icon = "📽️" if row['tipo'] == 'Video' else "📄"
+                    st.markdown(f"{icon} **{row['titulo']}**")
+                    st.caption(f"{row['subtipo']}")
+                with col_btn:
+                    st.link_button("Abrir", row['link'], use_container_width=True)
+                    if st.button("✅ Concluir", key=f"ok_{row['id']}", use_container_width=True):
+                        st.toast(registrar_estudo(st.session_state.username, ass, 1, 1))
