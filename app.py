@@ -3,40 +3,51 @@ import pandas as pd
 from datetime import datetime
 from database import (
     verificar_login, criar_usuario, registrar_estudo, 
-    registrar_simulado, get_progresso_hoje, get_lista_assuntos_nativa
+    registrar_simulado, get_progresso_hoje, get_lista_assuntos_nativa,
+    get_db
 )
 
+# 1. Configuração de Página deve ser a primeira chamada Streamlit
 st.set_page_config(page_title="MedPlanner", page_icon="🩺", layout="wide")
 
 # CSS e Estado
 st.markdown("<style>[data-testid='stSidebarNav'] {display: none;} .stTabs [data-baseweb='tab-list'] {justify-content: center;}</style>", unsafe_allow_html=True)
-if 'logado' not in st.session_state: st.session_state.logado = False
+
+if 'logado' not in st.session_state:
+    st.session_state.logado = False
 
 def tela_login():
     c1, c2, c3 = st.columns([1, 1.5, 1])
     with c2:
         st.title("🩺 MedPlanner Cloud")
         t1, t2 = st.tabs(["Entrar", "Criar Conta"])
+        
         with t1:
             with st.form("form_login"):
                 u = st.text_input("Usuário", key="u_login")
                 p = st.text_input("Senha", type="password", key="p_login")
-                if st.form_submit_button("Acessar", type="primary", use_container_width=True):
+                if st.form_submit_button("Aceder", type="primary", use_container_width=True):
                     ok, res = verificar_login(u, p)
                     if ok:
                         st.session_state.logado = True
                         st.session_state.username = u
                         st.session_state.u_nome = res
                         st.rerun()
-                    else: st.error(res)
+                    else:
+                        st.error(res)
+        
         with t2:
             with st.form("form_registro"):
                 nu = st.text_input("Novo Usuário", key="u_reg")
                 nn = st.text_input("Seu Nome", key="n_reg")
                 np = st.text_input("Senha", type="password", key="p_reg")
                 if st.form_submit_button("Registrar Conta", use_container_width=True):
-                    ok, msg = criar_usuario(nu, np, nn)
-                    st.success(msg) if ok else st.error(msg)
+                    if nu and np and nn:
+                        ok, msg = criar_usuario(nu, np, nn)
+                        if ok: st.success(msg)
+                        else: st.error(msg)
+                    else:
+                        st.warning("Preencha todos os campos.")
 
 def app_principal():
     u = st.session_state.username
@@ -79,9 +90,12 @@ def app_principal():
                 st.toast(registrar_estudo(u, "Banco Geral - Livre", acc, tot, dt))
 
         st.divider()
-        if st.button("Sair", key="btn_logout"): st.session_state.clear(); st.rerun()
+        if st.button("Sair", key="btn_logout"):
+            st.session_state.clear()
+            st.rerun()
 
     t1, t2, t3 = st.tabs(["📊 DASHBOARD", "📅 AGENDA", "📚 VIDEOTECA"])
+    
     with t1:
         from dashboard import render_dashboard
         render_dashboard(None)
@@ -92,5 +106,8 @@ def app_principal():
         from videoteca import render_videoteca
         render_videoteca(None)
 
-if st.session_state.logado: app_principal()
-else: tela_login()
+# Lógica de Execução Principal
+if st.session_state.logado:
+    app_principal()
+else:
+    tela_login()
