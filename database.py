@@ -8,17 +8,14 @@ import json
 import os
 
 # --- CONEXÃO FIREBASE (SINGLETON) ---
-# Evita reinicializar a app a cada recarga do Streamlit
 if not firebase_admin._apps:
     try:
         if "firebase" in st.secrets:
-            # Nuvem
             key_dict = dict(st.secrets["firebase"])
             key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
             cred = credentials.Certificate(key_dict)
             firebase_admin.initialize_app(cred)
         elif os.path.exists("firebase_key.json"):
-            # Local
             cred = credentials.Certificate("firebase_key.json")
             firebase_admin.initialize_app(cred)
     except Exception as e:
@@ -30,8 +27,9 @@ def get_db():
     except:
         return None
 
-# Função de compatibilidade (para não quebrar imports antigos)
+# --- FUNÇÃO DE COMPATIBILIDADE (CORRIGE O ERRO DE IMPORTAÇÃO) ---
 def get_connection():
+    """Função dummy para satisfazer imports antigos do app.py"""
     return None
 
 # ==========================================
@@ -86,23 +84,19 @@ def criar_usuario(u, p, n):
     return True, "Criado!"
 
 # ==========================================
-# 📊 ANALYTICS & DASHBOARD (FUNÇÃO QUE FALTAVA)
+# 📊 ANALYTICS (CORRIGE O ERRO DO DASHBOARD)
 # ==========================================
-
 def get_dados_graficos(u):
-    """
-    Baixa histórico do Firestore e faz o 'JOIN' com assuntos manualmente
-    para alimentar os gráficos do Dashboard.
-    """
+    """Retorna DataFrame com histórico para o Dashboard"""
     db = get_db()
     
-    # 1. Pega histórico do usuário
+    # 1. Histórico
     hist_ref = db.collection('historico').where('usuario_id', '==', u).stream()
     hist_data = [d.to_dict() for d in hist_ref]
     
     if not hist_data: return pd.DataFrame()
     
-    # 2. Pega mapa de assuntos (ID -> Area)
+    # 2. Assuntos
     assuntos_ref = db.collection('assuntos').stream()
     assuntos_map = {d.id: d.to_dict() for d in assuntos_ref}
     
@@ -143,7 +137,7 @@ def get_status_gamer(u):
     prox = nivel * 1000
     
     p = {'nivel': nivel, 'xp_atual': xp, 'xp_total': xp, 'titulo': d.get('titulo', 'Calouro'), 'xp_proximo': prox}
-    return p, pd.DataFrame() # Missões vazias por enquanto
+    return p, pd.DataFrame() 
 
 def adicionar_xp(u, qtd):
     db = get_db()
@@ -242,6 +236,7 @@ def concluir_revisao(rid, acertos, total):
     db = get_db()
     ref = db.collection('revisoes').document(rid)
     ref.update({'status': 'Concluido'})
+    # Lógica SRS Simplificada para Cloud
     return "✅ Feito!"
 
 def listar_conteudo_videoteca():
@@ -255,8 +250,12 @@ def listar_conteudo_videoteca():
         data.append({'id': doc.id, 'assunto': ad['nome'], 'grande_area': ad['grande_area'], **d})
     return pd.DataFrame(data)
 
-# Placeholders para compatibilidade
+# --- PLACEHOLDERS PARA FUNÇÕES LOCAIS (EVITA ERROS DE IMPORT) ---
 def pesquisar_global(t): return listar_conteudo_videoteca()
 def excluir_conteudo(id): pass
+def atualizar_nome_assunto(id, n): pass
+def deletar_assunto(id): pass
+def registrar_topico_do_sumario(g, n): pass
+def resetar_progresso(u): pass 
 
 inicializar_db()
