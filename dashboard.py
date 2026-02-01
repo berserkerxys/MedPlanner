@@ -1,35 +1,60 @@
 import streamlit as st
+import pandas as pd
 import plotly.express as px
-from database import get_status_gamer, get_dados_graficos
+import plotly.graph_objects as go
+from database import get_status_gamer, get_progresso_hoje, get_dados_graficos
 
 def render_dashboard(conn_ignored):
+    if 'username' not in st.session_state: return
     u = st.session_state.username
+
+    # --- 1. CABEÇALHO GAMIFICADO ---
     perfil, _ = get_status_gamer(u)
     
-    # Cabeçalho
     if perfil:
-        st.markdown(f"## Nível {perfil['nivel']} - {perfil['titulo']}")
-        st.progress(perfil['xp'] / 1000) # Exemplo simplificado
-    
+        st.markdown(f"## 🩺 {perfil['titulo']} - Nível {perfil['nivel']}")
+        progresso_xp = perfil['xp_atual'] / perfil['xp_proximo'] if perfil['xp_proximo'] > 0 else 0
+        st.progress(progresso_xp)
+        st.caption(f"XP: {perfil['xp_atual']} / {perfil['xp_proximo']}")
+
     st.divider()
+
+    # --- 2. META DIÁRIA ---
+    questoes_hoje = get_progresso_hoje(u)
+    meta_hoje = 50 
     
-    # Gráficos (Usando Pandas e não SQL)
-    df_hist = get_dados_graficos(u)
+    fig_meta = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = questoes_hoje,
+        title = {'text': "Questões Hoje"},
+        gauge = {'axis': {'range': [None, 100]}, 'bar': {'color': "#10b981"}}
+    ))
+    fig_meta.update_layout(height=200, margin=dict(t=30,b=20,l=20,r=20))
+    st.plotly_chart(fig_meta, use_container_width=True)
+
+    st.divider()
+
+    # --- 3. GRÁFICOS (Usando get_dados_graficos) ---
+    st.subheader("📊 Performance")
     
-    if df_hist.empty:
-        st.info("Sem dados ainda.")
-        return
+    # Busca dados processados do Firebase
+    df_perf = get_dados_graficos(u)
+    
+    if df_perf.empty:
+        st.info("Registe o seu primeiro estudo para ver os gráficos!")
+    else:
+        # Gráfico de Áreas
+        # Filtra 'Banco Geral' se quiser focar nas áreas médicas
+        df_areas = df_perf[df_perf['grande_area'] != 'Banco Geral']
+        if not df_areas.empty:
+            df_agrupado = df_areas.groupby('grande_area')[['acertos', 'total']].sum().reset_index()
+            df_agrupado['Nota'] = (df_agrupado['acertos'] / df_agrupado['total'] * 100).round(1)
+            
+            fig_bar = px.bar(df_agrupado, x='grande_area', y='Nota', color='grande_area', title="Aproveitamento por Área (%)")
+            st.plotly_chart(fig_bar, use_container_width=True)
         
-    c1, c2 = st.columns(2)
-    
-    # Gráfico de Barras
-    df_area = df_hist.groupby('area')[['acertos', 'total']].sum().reset_index()
-    df_area['Nota'] = (df_area['acertos'] / df_area['total'] * 100).round(1)
-    
-    fig1 = px.bar(df_area, x='area', y='Nota', title="Desempenho por Área", color='area')
-    c1.plotly_chart(fig1, use_container_width=True)
-    
-    # Gráfico de Evolução
-    df_evo = df_hist.groupby('data_estudo')['percentual'].mean().reset_index()
-    fig2 = px.line(df_evo, x='data_estudo', y='percentual', title="Evolução Diária")
-    c2.plotly_chart(fig2, use_container_width=True)
+        # Evolução Temporal
+        # Agrupa por data
+        df_evo = df_perf.groupby('data_estudo')['percentual'].mean().reset_index()
+        fig_line = px.line(df_evo, x='data_estudo', y='percentual', markers=True, title="Evolução Diária")
+        st.plotly_chart(fig_line, use_container_width=True)
