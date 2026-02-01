@@ -18,6 +18,18 @@ def render_sidebar():
     status, _ = get_status_gamer(u, nonce)
     total_q_global, conquistas, proximo_nivel = get_conquistas_e_stats(u)
     
+    # --- NOTIFICAÇÃO DE TROFÉU ---
+    # Verifica se houve desbloqueio recente (simulação simples baseada no estado anterior)
+    if 'last_total_q' not in st.session_state:
+        st.session_state.last_total_q = total_q_global
+    
+    if total_q_global > st.session_state.last_total_q:
+        # Se aumentou o número de questões, verifica se desbloqueou algo novo
+        for c in conquistas:
+            if c['desbloqueado'] and c['meta'] > st.session_state.last_total_q and c['meta'] <= total_q_global:
+                st.toast(f"🏆 CONQUISTA DESBLOQUEADA: {c['nome']}!", icon="🎉")
+        st.session_state.last_total_q = total_q_global
+
     with st.sidebar:
         # --- CABEÇALHO ---
         st.markdown(f"### 🩺 Dr(a). {st.session_state.get('u_nome', 'Usuário')}")
@@ -36,11 +48,56 @@ def render_sidebar():
         st.divider()
 
         # --- ABAS PRINCIPAIS ---
-        tab_meta, tab_conq, tab_conta = st.tabs(["🎯 Meta", "🏆 Conquistas", "👤 Conta"])
+        tab_conta, tab_conq, tab_meta = st.tabs(["👤 Perfil", "🏆 Troféus", "🎯 Meta"])
 
-        # 1. ABA META DIÁRIA
+        # 1. ABA DADOS DA CONTA (PERFIL)
+        with tab_conta:
+            st.markdown("### 🆔 Credenciais")
+            st.text_input("Usuário:", value=u, disabled=True)
+            st.text_input("ID:", value=f"MED-{hash(u)%100000:05d}", disabled=True)
+            st.text_input("Senha:", value="••••••••", type="password", disabled=True)
+            
+            st.caption("🔒 Seus dados estão seguros.")
+            
+            if st.button("Sair da Conta", type="primary", use_container_width=True):
+                st.session_state.logado = False
+                st.rerun()
+
+        # 2. ABA CONQUISTAS (HARDCORE - GALERIA DE TROFÉUS)
+        with tab_conq:
+            st.markdown(f"### 🏅 Sala de Troféus")
+            st.caption(f"Total Global: **{total_q_global}** questões resolvidas")
+            
+            # Barra "Rumo à Aprovação" (20k)
+            perc_aprov = min(total_q_global / 20000, 1.0)
+            st.progress(perc_aprov, text=f"Rumo à Aprovação ({int(perc_aprov*100)}%)")
+            
+            if proximo_nivel:
+                falta = proximo_nivel['meta'] - total_q_global
+                st.info(f"Faltam **{falta}q** para o próximo nível!")
+            
+            st.markdown("---")
+            
+            # Galeria Visual de Conquistas
+            for c in conquistas:
+                with st.container(border=True):
+                    col_icon, col_info = st.columns([1, 3])
+                    with col_icon:
+                        if c['desbloqueado']:
+                            st.markdown(f"## {c['icon']}")
+                        else:
+                            st.markdown("## 🔒")
+                    with col_info:
+                        if c['desbloqueado']:
+                            st.markdown(f"**{c['nome']}**")
+                            st.caption(f"✅ Conquistado ({c['meta']}q)")
+                        else:
+                            st.markdown(f"**Bloqueado**")
+                            st.caption(f"Meta: {c['meta']} questões")
+
+        # 3. ABA META DIÁRIA
         with tab_meta:
-            st.caption("Ajuste sua meta diária de questões:")
+            st.caption("Defina seu ritmo diário:")
             
             def on_meta_change():
                 nova_meta = st.session_state.slider_meta
@@ -49,53 +106,23 @@ def render_sidebar():
 
             meta_val = int(status['meta_diaria'])
             st.slider(
-                "Objetivo:", 10, 200, meta_val, 5, 
+                "Questões/Dia:", 10, 200, meta_val, 5, 
                 key="slider_meta", on_change=on_meta_change
             )
             
             prog = get_progresso_hoje(u, nonce)
             perc = min(prog / meta_val, 1.0) if meta_val > 0 else 0
             st.progress(perc, text=f"Hoje: {prog}/{meta_val}")
-            if perc >= 1.0: st.success("Meta batida!")
-
-        # 2. ABA CONQUISTAS (HARDCORE)
-        with tab_conq:
-            st.caption(f"**Total Global: {total_q_global} questões**")
             
-            # Barra "Rumo à Aprovação" (20k)
-            perc_aprov = min(total_q_global / 20000, 1.0)
-            st.progress(perc_aprov, text=f"Rumo à Aprovação ({int(perc_aprov*100)}%)")
-            
-            if proximo_nivel:
-                falta = proximo_nivel['meta'] - total_q_global
-                st.info(f"Faltam {falta}q para: **{proximo_nivel['nome']}**")
-            
-            st.markdown("---")
-            st.markdown("**Sala de Troféus:**")
-            
-            for c in conquistas:
-                if c['desbloqueado']:
-                    st.success(f"{c['icon']} **{c['nome']}** ({c['meta']}q)")
-                else:
-                    st.markdown(f"🔒 {c['nome']} _({c['meta']}q)_")
-
-        # 3. ABA DADOS DA CONTA
-        with tab_conta:
-            st.info("ℹ️ Dados de Acesso")
-            st.text_input("Usuário (Login):", value=u, disabled=True)
-            st.text_input("ID do Sistema:", value=f"USR-{hash(u)%10000:04d}", disabled=True)
-            st.text_input("Senha:", value="••••••••", type="password", disabled=True, help="A senha é criptografada e não pode ser exibida.")
-            
-            st.caption("🔒 Suas credenciais são protegidas por criptografia bcrypt.")
-            
-            if st.button("Sair / Logout", type="primary"):
-                st.session_state.logado = False
-                st.rerun()
+            if perc >= 1.0: 
+                st.success("🔥 Meta diária batida!")
+            else:
+                st.info(f"Faltam {meta_val - prog} para a meta.")
 
         st.divider()
 
         # --- REGISTRO DE ATIVIDADE ---
-        st.markdown("### 📝 Registrar")
+        st.markdown("### 📝 Registrar Estudo")
         t_reg, t_sim = st.tabs(["Aula", "Simulado"])
         
         with t_reg:
@@ -105,7 +132,7 @@ def render_sidebar():
             ac = c1.number_input("Acertos", 0, 300, 0)
             tot = c2.number_input("Total", 1, 300, 10)
             
-            if st.button("✅ Salvar", use_container_width=True):
+            if st.button("✅ Salvar Aula", use_container_width=True):
                 if assunto:
                     msg = registrar_estudo(u, assunto, ac, tot)
                     st.success(msg)
