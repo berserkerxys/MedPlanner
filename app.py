@@ -1,11 +1,12 @@
-# app.py (versão corrigida para evitar AttributeError: u_nome)
+# app.py
 import streamlit as st
 import traceback
 import sys
+import time
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
 
-# Styling (mantive seu CSS)
+# Styling global para esconder o menu padrão e ajustar abas
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {display: none;}
@@ -14,80 +15,65 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# TRY IMPORTS: captura falhas de import e mostra o traceback na página
+# Imports seguros com tratamento de erro
 _import_ok = True
 _import_exc = None
 try:
     import pandas as pd
-    import time
     from datetime import datetime
-    # imports do seu projeto
+    
+    # Imports locais
     from sidebar_v2 import render_sidebar
     from database import get_resumo, salvar_resumo, verificar_login, criar_usuario, get_supabase, get_lista_assuntos_nativa
+    from perfil import render_perfil # Novo módulo de perfil
 except Exception as e:
     _import_ok = False
     _import_exc = traceback.format_exc()
 
-# Mostrar erro de import se houver
 if not _import_ok:
     st.title("⛔ Erro ao iniciar a aplicação")
-    st.error("Houve uma exceção durante a importação dos módulos. O trace completo está abaixo.")
+    st.error("Falha na importação dos módulos. Verifique o log abaixo.")
     st.code(_import_exc)
-    st.markdown("Verifique as funções exportadas em database.py e se todos os arquivos existem.")
     st.stop()
 
-# -------------------------------------------------------------------------
-# CORREÇÃO 1: Inicialização Garantida das Variáveis de Sessão
-# -------------------------------------------------------------------------
+# Inicialização de Sessão Segura
 if 'logado' not in st.session_state: st.session_state.logado = False
 if 'username' not in st.session_state: st.session_state.username = "guest"
-# A linha abaixo corrige o crash se a sessão for recarregada ou iniciada sem login
 if 'u_nome' not in st.session_state: st.session_state.u_nome = "Doutor(a)"
 if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
-# Pequeno painel de diagnóstico no topo (dev)
-with st.expander("🔧 Diagnóstico (apenas dev)", expanded=False):
-    try:
-        st.write("Hora do servidor:", datetime.now().isoformat())
-        st.write("Usuário Logado:", st.session_state.username)
-        st.write("Nome Display:", st.session_state.u_nome)
-        sup = get_supabase()
-        st.write("Supabase disponível?", bool(sup))
-    except Exception as e:
-        st.write("Erro no diagnóstico:")
-        st.code(traceback.format_exc())
-
-# Funções auxiliares da UI
+# Função Auxiliar de Resumos (mantida no app principal por simplicidade)
 def render_resumos_ui(u):
     try:
         st.header("📝 Meus Resumos")
         areas = ["Cirurgia", "Clínica Médica", "G.O.", "Pediatria", "Preventiva"]
-        for area in areas:
-            with st.expander(f"📘 {area}", expanded=False):
-                txt = st.text_area(f"Notas de {area}:", value=get_resumo(u, area), height=300, key=f"t_{area}")
-                if st.button(f"Salvar {area}", key=f"s_{area}"):
-                    if salvar_resumo(u, area, txt): st.toast("Salvo!")
+        
+        tab_areas = st.tabs(areas)
+        
+        for i, area in enumerate(areas):
+            with tab_areas[i]:
+                txt_val = get_resumo(u, area)
+                txt = st.text_area(f"Notas de {area}:", value=txt_val, height=400, key=f"t_{area}")
+                
+                c1, c2 = st.columns([1, 5])
+                with c1:
+                    if st.button(f"Salvar {area}", key=f"s_{area}", type="primary"):
+                        if salvar_resumo(u, area, txt): 
+                            st.toast("Resumo salvo com sucesso!", icon="✅")
     except Exception:
         st.error("Erro na UI de resumos")
-        st.code(traceback.format_exc())
 
-def render_perfil_aluno():
-    try:
-        st.header("👤 Perfil do Aluno")
-        st.write(f"Olá, {st.session_state.u_nome}. Seu painel de gamificação está na barra lateral.")
-    except Exception:
-        st.error("Erro ao renderizar perfil")
-        st.code(traceback.format_exc())
-
+# --- APLICAÇÃO PRINCIPAL ---
 def app_principal():
     try:
         u = st.session_state.username
-        # O render_sidebar usa st.session_state.u_nome, que agora está garantido
+        
+        # Renderiza a Sidebar simplificada
         render_sidebar()
 
         st.markdown("<h2 style='text-align:center;'>🩺 MEDPLANNER PRO</h2>", unsafe_allow_html=True)
 
-        # Pomodoro Topo
+        # Widget Pomodoro
         with st.expander("⏲️ Foco Pomodoro", expanded=False):
             c1, c2, c3 = st.columns([1, 2, 1])
             with c2:
@@ -102,76 +88,59 @@ def app_principal():
                 m, sec = divmod(s, 60)
                 st.markdown(f"<h1 style='text-align:center;'>{m:02d}:{sec:02d}</h1>", unsafe_allow_html=True)
                 st.session_state["_pomodoro_remaining"] = max(0, s-1)
-
-        # Abas principais
-        tabs = st.tabs(["📊 PERFORMANCE", "📅 AGENDA", "📚 VIDEOTECA", "📝 RESUMOS", "👤 PERFIL", "🗂️ CRONOGRAMA"])
-        
-        with tabs[0]:
-            try:
-                from dashboard import render_dashboard
-                render_dashboard(None)
-            except Exception:
-                st.error("Erro ao renderizar Dashboard")
-                st.code(traceback.format_exc())
-        with tabs[1]:
-            try:
-                from agenda import render_agenda
-                render_agenda(None)
-            except Exception:
-                st.error("Erro ao renderizar Agenda")
-                st.code(traceback.format_exc())
-        with tabs[2]:
-            try:
-                from videoteca import render_videoteca
-                render_videoteca(None)
-            except Exception:
-                st.error("Erro ao renderizar Videoteca")
-                st.code(traceback.format_exc())
-        with tabs[3]:
-            render_resumos_ui(u)
-        with tabs[4]:
-            render_perfil_aluno()
-        with tabs[5]:
-            try:
-                from cronograma import render_cronograma
-                render_cronograma(None)
-            except Exception:
-                st.error("Erro ao renderizar Cronograma")
-                st.code(traceback.format_exc())
-
-    except Exception:
-        st.error("Erro durante a execução do app principal")
-        st.code(traceback.format_exc())
-
-def tela_login():
-    try:
-        st.header("🔐 Login")
-        u = st.text_input("Usuário:", value="", key="login_user")
-        p = st.text_input("Senha:", value="", type="password", key="login_pass")
-        if st.button("Entrar"):
-            ok, nome = verificar_login(u, p)
-            if ok:
-                st.session_state.logado = True
-                st.session_state.username = u
-                # ---------------------------------------------------------
-                # CORREÇÃO 2: Salvando o nome retornado pelo banco na sessão
-                # ---------------------------------------------------------
-                st.session_state.u_nome = nome 
-                
-                st.toast(f"Bem-vindo {nome}!")
+                time.sleep(1)
                 st.rerun()
-            else:
-                st.error(nome)
+
+        # Navegação Principal
+        abas = st.tabs(["📊 PERFORMANCE", "📅 AGENDA", "📚 VIDEOTECA", "📝 RESUMOS", "🗂️ CRONOGRAMA", "👤 PERFIL"])
+        
+        with abas[0]:
+            from dashboard import render_dashboard
+            render_dashboard(None)
+        with abas[1]:
+            from agenda import render_agenda
+            render_agenda(None)
+        with abas[2]:
+            from videoteca import render_videoteca
+            render_videoteca(None)
+        with abas[3]:
+            render_resumos_ui(u)
+        with abas[4]:
+            from cronograma import render_cronograma
+            render_cronograma(None)
+        with abas[5]:
+            # Aba dedicada ao Perfil e Conquistas
+            render_perfil(None)
+
     except Exception:
-        st.error("Erro na tela de login")
+        st.error("Erro crítico durante a execução do app")
         st.code(traceback.format_exc())
 
-# Entry point
-try:
-    if st.session_state.logado:
-        app_principal()
-    else:
-        tela_login()
-except Exception:
-    st.error("Erro inesperado no fluxo principal")
-    st.code(traceback.format_exc())
+# --- TELA DE LOGIN ---
+def tela_login():
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 2, 1])
+    
+    with c2:
+        with st.container(border=True):
+            st.markdown("<h2 style='text-align:center;'>🔐 Acesso MedPlanner</h2>", unsafe_allow_html=True)
+            u = st.text_input("Usuário", key="login_user")
+            p = st.text_input("Senha", type="password", key="login_pass")
+            
+            if st.button("Entrar", type="primary", use_container_width=True):
+                ok, nome = verificar_login(u, p)
+                if ok:
+                    st.session_state.logado = True
+                    st.session_state.username = u
+                    st.session_state.u_nome = nome
+                    st.toast(f"Bem-vindo, {nome}!", icon="👋")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error(nome)
+
+# Entry Point
+if st.session_state.logado:
+    app_principal()
+else:
+    tela_login()
