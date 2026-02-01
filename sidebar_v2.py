@@ -2,21 +2,23 @@ import streamlit as st
 from datetime import datetime
 from database import (
     get_status_gamer, get_lista_assuntos_nativa, 
-    registrar_estudo, registrar_simulado, update_meta_diaria
+    registrar_estudo, registrar_simulado, update_meta_diaria,
+    get_progresso_hoje
 )
 
 def render_sidebar():
-    """Barra lateral modular com gamificação, metas e registros detalhados."""
+    """Barra lateral modular com gamificação, metas visuais e registros detalhados."""
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # Busca status para UI
+    # Busca status para UI e progresso atual
     status, df_m = get_status_gamer(u, nonce)
+    q_hoje = get_progresso_hoje(u, nonce)
     
     with st.sidebar:
         st.markdown(f"### 🩺 Dr. {st.session_state.u_nome}")
         
-        # 1. PERFIL GAMER
+        # 1. PERFIL GAMER E META VISUAL
         if status:
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -26,9 +28,23 @@ def render_sidebar():
                 st.caption(f"XP: {status['xp_atual']}/1000")
                 st.progress(status['xp_atual']/1000)
             
+            st.divider()
+            
+            # --- RECURSO GRÁFICO DA META DIÁRIA ---
+            meta = status['meta_diaria']
+            progresso_meta = min(q_hoje / meta, 1.0)
+            
+            st.markdown(f"🎯 **Missão Diária: {q_hoje} / {meta} q**")
+            st.progress(progresso_meta)
+            
+            if q_hoje >= meta:
+                st.success("🔥 Meta Diária Batida!")
+            else:
+                st.caption(f"Faltam {meta - q_hoje} questões para o objetivo.")
+
             # Configuração de Meta
             with st.expander("⚙️ Ajustar Meta Diária"):
-                nova_meta = st.number_input("Objetivo (questões):", 1, 500, status['meta_diaria'])
+                nova_meta = st.number_input("Novo Objetivo (questões):", 1, 500, meta)
                 if st.button("Salvar Meta"):
                     if update_meta_diaria(u, nova_meta):
                         st.success("Meta atualizada!")
@@ -52,7 +68,7 @@ def render_sidebar():
             tot = c2.number_input("Total", 1, 300, 10, key="sb_tot")
             if st.button("💾 Salvar Aula", use_container_width=True, type="primary"):
                 if t: st.toast(registrar_estudo(u, t, acc, tot))
-                else: st.error("Escolha o tema!")
+                else: st.error("Selecione um tema!")
 
         elif tipo == "Simulado Completo":
             with st.expander("📍 Áreas do Simulado", expanded=True):
