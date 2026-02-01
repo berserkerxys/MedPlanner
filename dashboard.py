@@ -1,5 +1,7 @@
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
 import time
 from database import get_status_gamer, get_dados_graficos, listar_conteudo_videoteca
 
@@ -7,120 +9,108 @@ def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # --- SISTEMA DE PRÉ-CARREGAMENTO COM BARRA DE PROGRESSO EM TEMPO REAL ---
-    # Criamos um container temporário para a tela de loading
+    # --- TELA DE CARREGAMENTO ÚNICA ---
     loading_placeholder = st.empty()
-    
     with loading_placeholder.container():
-        st.markdown("<h3 style='text-align: center;'>🩺 Sincronizando dados médicos...</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align: center;'>🩺 Sincronizando sua performance médica...</h3>", unsafe_allow_html=True)
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Passo 1: Status e Perfil Gamer
-        status_text.caption("Obtendo perfil do aluno...")
+        status_text.caption("Obtendo perfil...")
         status, df_m = get_status_gamer(u, nonce)
-        progress_bar.progress(25)
-        time.sleep(0.2)
+        progress_bar.progress(30)
         
-        # Passo 2: Histórico e Performance
-        status_text.caption("Analisando histórico de desempenho...")
+        status_text.caption("Processando estatísticas avançadas...")
         df = get_dados_graficos(u, nonce)
-        progress_bar.progress(50)
-        time.sleep(0.2)
+        progress_bar.progress(70)
         
-        # Passo 3: Cache da Videoteca
-        status_text.caption("Preparando biblioteca de conteúdos...")
+        status_text.caption("Finalizando ambiente...")
         listar_conteudo_videoteca()
-        progress_bar.progress(75)
-        time.sleep(0.2)
-        
-        # Passo 4: Finalização da UI
-        status_text.caption("Renderizando painel de controle...")
         progress_bar.progress(100)
-        time.sleep(0.3)
+        time.sleep(0.4)
     
-    # Limpa a tela de loading para mostrar o site
     loading_placeholder.empty()
 
-    # --- INÍCIO DA INTERFACE DO DASHBOARD ---
-    
-    # 1. CABEÇALHO DE STATUS (GAMIFICAÇÃO)
+    # 1. STATUS DE GAMIFICAÇÃO
     if status:
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            st.markdown(f"### 🏆 {status['titulo']} - Nível {status['nivel']}")
-            prog_total = status['xp_atual'] / status['xp_proximo']
-            st.progress(prog_total, text=f"XP: {status['xp_atual']} / {status['xp_proximo']} para o próximo nível")
-        with c2:
-            st.metric("XP Total Acumulado", f"{status['xp_total']} pts")
+        st.markdown(f"### 🏆 {status['titulo']} - Nível {status['nivel']}")
+        prog_total = status['xp_atual'] / status['xp_proximo']
+        st.progress(prog_total, text=f"XP: {status['xp_atual']} / {status['xp_proximo']}")
 
     st.divider()
 
-    # 2. SEÇÃO DE MISSÕES (OBJETIVOS DIÁRIOS)
-    st.subheader("🚀 Missões de Hoje")
+    # 2. MISSÕES DIÁRIAS (DESIGN FIXO)
+    st.subheader("🚀 Missões Ativas")
     if not df_m.empty:
-        cols = st.columns(3)
+        m_cols = st.columns(3)
         for i, row in df_m.iterrows():
-            with cols[i]:
+            with m_cols[i]:
                 with st.container(border=True):
                     st.markdown(f"**{row['Icon']} {row['Meta']}**")
                     prog_m = min(row['Prog'] / row['Objetivo'], 1.0)
                     st.progress(prog_m)
-                    st.markdown(f"<p style='text-align: right; font-size: 0.8rem; color: gray;'>{row['Prog']} / {row['Objetivo']}</p>", unsafe_allow_html=True)
-    
-    st.divider()
-    
-    # 3. GRÁFICOS PROFISSIONAIS (Cores de Alto Contraste)
-    if not df.empty:
-        st.subheader("📈 Análise de Performance")
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            # Gráfico de Evolução com cor Indigo Profissional
-            df_evo = df.groupby(df['data'].dt.date)['percentual'].mean().reset_index()
-            fig_line = px.line(df_evo, x='data', y='percentual', 
-                              title="Evolução de Aproveitamento (%)",
-                              markers=True, line_shape="spline",
-                              color_discrete_sequence=["#4f46e5"])
-            
-            fig_line.update_layout(
-                yaxis_range=[0,105], 
-                template="plotly_white",
-                margin=dict(l=20, r=20, t=40, b=20),
-                hovermode="x unified"
-            )
-            st.plotly_chart(fig_line, use_container_width=True)
-            
-        with c2:
-            # Barras com paleta "Bold" para distinguir as especialidades
-            df_area = df.groupby('area')[['acertos', 'total']].sum().reset_index()
-            df_area['%'] = (df_area['acertos'] / df_area['total'] * 100).round(1)
-            
-            fig_bar = px.bar(df_area, x='area', y='%', color='area',
-                            title="Desempenho por Especialidade",
-                            color_discrete_sequence=px.colors.qualitative.Bold,
-                            text_auto='.1f')
-            
-            fig_bar.update_layout(
-                yaxis_range=[0,105], 
-                showlegend=False, 
-                template="plotly_white",
-                margin=dict(l=20, r=20, t=40, b=20)
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
+                    st.caption(f"{row['Prog']} / {row['Objetivo']}")
 
-        # 4. MÉTRICAS TOTAIS (KPIs)
-        st.markdown("### 📊 Resumo de Carreira")
-        m1, m2, m3 = st.columns(3)
-        total_q = df['total'].sum()
-        total_a = df['acertos'].sum()
+    st.divider()
+
+    # 3. ANÁLISE TEMPORAL (DIÁRIO, SEMANAL, MENSAL)
+    if not df.empty:
+        st.subheader("📈 Evolução de Aproveitamento")
         
-        with m1:
-            st.metric("Total de Questões", int(total_q))
-        with m2:
-            st.metric("Total de Acertos", int(total_a))
-        with m3:
-            media = (total_a/total_q*100) if total_q > 0 else 0
-            st.metric("Aproveitamento Geral", f"{media:.1f}%")
+        # Criamos abas para os diferentes períodos
+        tab_dia, tab_semana, tab_mes, tab_especialidade = st.tabs([
+            "📅 Diário", "🗓️ Semanal", "📊 Mensal", "🩺 Por Área"
+        ])
+
+        with tab_dia:
+            # Agrupamento Diário (Últimos 15 registros de dias)
+            df_day = df.groupby(df['data'].dt.date).agg({'acertos':'sum', 'total':'sum'}).reset_index()
+            df_day['%'] = (df_day['acertos'] / df_day['total'] * 100).round(1)
+            fig_day = px.line(df_day.tail(15), x='data', y='%', markers=True, title="Performance por Dia (%)", 
+                             line_shape="spline", color_discrete_sequence=["#2563eb"])
+            fig_day.update_layout(yaxis_range=[0, 105], template="plotly_white", height=350)
+            st.plotly_chart(fig_day, use_container_width=True, config={'displayModeBar': False})
+
+        with tab_semana:
+            # Agrupamento Semanal
+            df['semana'] = df['data'].dt.to_period('W').apply(lambda r: r.start_time)
+            df_week = df.groupby('semana').agg({'acertos':'sum', 'total':'sum'}).reset_index()
+            df_week['%'] = (df_week['acertos'] / df_week['total'] * 100).round(1)
+            fig_week = px.bar(df_week, x='semana', y='%', text_auto='.1f', title="Média Semanal (%)", 
+                             color_discrete_sequence=["#6366f1"])
+            fig_week.update_layout(yaxis_range=[0, 105], template="plotly_white", height=350)
+            st.plotly_chart(fig_week, use_container_width=True, config={'displayModeBar': False})
+
+        with tab_mes:
+            # Agrupamento Mensal
+            df['mes'] = df['data'].dt.strftime('%b/%Y')
+            df_month = df.groupby('mes').agg({'acertos':'sum', 'total':'sum'}).reset_index()
+            df_month['%'] = (df_month['acertos'] / df_month['total'] * 100).round(1)
+            fig_month = px.bar(df_month, x='mes', y='%', title="Consolidado Mensal (%)", 
+                              color_discrete_sequence=["#8b5cf6"], text_auto='.1f')
+            fig_month.update_layout(yaxis_range=[0, 105], template="plotly_white", height=350)
+            st.plotly_chart(fig_month, use_container_width=True, config={'displayModeBar': False})
+            
+        with tab_especialidade:
+            # Gráfico de Barras Fixo por Área
+            df_area = df.groupby('area').agg({'acertos':'sum', 'total':'sum'}).reset_index()
+            df_area['%'] = (df_area['acertos'] / df_area['total'] * 100).round(1)
+            fig_area = px.bar(df_area, x='area', y='%', color='area', title="Aproveitamento por Especialidade",
+                             color_discrete_sequence=px.colors.qualitative.Bold, text_auto='.1f')
+            fig_area.update_layout(yaxis_range=[0, 105], showlegend=False, template="plotly_white", height=350)
+            st.plotly_chart(fig_area, use_container_width=True, config={'displayModeBar': False})
+
+        # 4. KPIs TOTAIS (CORREÇÃO DE SIMULADOS)
+        st.divider()
+        st.markdown("### 📊 Totais Acumulados")
+        m1, m2, m3 = st.columns(3)
+        total_q = int(df['total'].sum())
+        total_a = int(df['acertos'].sum())
+        media_geral = (total_a / total_q * 100) if total_q > 0 else 0
+        
+        m1.metric("Questões Respondidas", total_q)
+        m2.metric("Acertos Totais", total_a)
+        m3.metric("Aproveitamento Geral", f"{media_geral:.1f}%")
+
     else:
-        st.info("Ainda não existem dados de desempenho suficientes para gerar gráficos. Continue a estudar!")
+        st.info("Registre seus primeiros estudos para visualizar os gráficos de desempenho.")
