@@ -115,5 +115,25 @@ def render_perfil(conn_ignored):
                     st.caption(f"Meta: {c['meta']} questões")
                     st.progress(min(total_q_global / c['meta'], 1.0))
 
+    st.divider()
+
+    # --- 4. ZONA DE PERIGO (ALTERAR LOGIN/LOGOUT) ---
+    with st.expander("🚨 Zona de Perigo / Segurança"):
+        st.error("Atenção: Ações críticas.")
+        
+        c_p1, c_p2 = st.columns(2)
+        
+        with c_p1:
+            st.markdown("**Alterar Credenciais**")
+            st.caption("Para alterar sua senha, entre em contato com o suporte ou use a função de recuperação (em breve).")
+            st.text_input("Usuário (Imutável):", value=u, disabled=True)
+            st.text_input("ID Interno:", value=f"MED-{hash(u)%100000:05d}", disabled=True)
+        
+        with c_p2:
+            st.markdown("**Sessão**")
+            if st.button("Sair da Conta (Logout)", type="primary"):
+                st.session_state.logado = False
+                st.rerun()
+
 def today_is_birthday(nasc, hoje):
     return nasc.month == hoje.month and nasc.day == hoje.day

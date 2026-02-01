@@ -190,7 +190,11 @@ def tela_login():
                             st.success("Conta criada com sucesso! Faça login na aba 'Entrar'.")
                             st.balloons()
                         else:
-                            st.error(f"Erro ao criar conta: {msg}")
+                            # Mensagem específica se o usuário já existir
+                            if "IntegrityError" in str(msg) or "UNIQUE constraint" in str(msg):
+                                st.error("Este nome de usuário já está em uso. Tente outro.")
+                            else:
+                                st.error(f"Erro ao criar conta: {msg}")
 
         st.markdown("""
             <div style='text-align: center; margin-top: 20px; color: #666;'>
