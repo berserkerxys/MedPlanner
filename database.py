@@ -16,7 +16,7 @@ def get_supabase() -> Client:
             return create_client(url, key)
         return None
     except Exception as e:
-        st.error(f"Erro de conexão: {e}")
+        st.error(f"Erro de conexão Supabase: {e}")
         return None
 
 # ==========================================
@@ -34,6 +34,19 @@ def listar_conteudo_videoteca():
         return df
     except Exception:
         return pd.DataFrame()
+
+def get_area_por_assunto(nome_assunto):
+    """Busca a Grande Área de um assunto no arquivo nativo de forma robusta."""
+    df = listar_conteudo_videoteca()
+    if df.empty: return "Geral"
+    
+    # Busca exata ignorando espaços e cases
+    nome_busca = str(nome_assunto).strip().lower()
+    match = df[df['assunto'].str.strip().str.lower() == nome_busca]
+    
+    if not match.empty:
+        return match.iloc[0]['grande_area']
+    return "Geral"
 
 def get_lista_assuntos_nativa():
     """Gera lista de temas para o selectbox do app."""
@@ -105,10 +118,10 @@ def get_dados_graficos(u):
         df = pd.DataFrame(res.data)
         if df.empty: return df
         
+        # Mapeamento dinâmico de áreas
         lib = listar_conteudo_videoteca()
         area_map = lib.set_index('assunto')['grande_area'].to_dict() if not lib.empty else {}
         
-        # Mapeia a área ou usa 'Geral' se não encontrar
         df['area'] = df['assunto_nome'].map(area_map)
         if 'area_manual' in df.columns:
             df['area'] = df['area'].fillna(df['area_manual'])
@@ -120,52 +133,90 @@ def get_dados_graficos(u):
     except: return pd.DataFrame()
 
 # ==========================================
-# 📝 MÓDULO 4: REGISTOS E AGENDA
+# 📝 MÓDULO 4: REGISTOS E AGENDA (REVISÕES)
 # ==========================================
 
 def registrar_estudo(u, assunto, acertos, total, data_personalizada=None):
     client = get_supabase()
-    if not client: return "Erro"
-    dt = data_personalizada.strftime("%Y-%m-%d") if data_personalizada else datetime.now().strftime("%Y-%m-%d")
+    if not client: return "Erro de Conexão"
+    
+    # Tratamento da Data
+    if data_personalizada:
+        if isinstance(data_personalizada, (datetime, pd.Timestamp)):
+            dt_obj = data_personalizada
+        else:
+            dt_obj = datetime.combine(data_personalizada, datetime.min.time())
+    else:
+        dt_obj = datetime.now()
+        
+    dt_str = dt_obj.strftime("%Y-%m-%d")
+    area_detectada = get_area_por_assunto(assunto)
+
     try:
+        # 1. Salvar Histórico
         client.table("historico").insert({
-            "usuario_id": u, "assunto_nome": assunto, "data_estudo": dt, "acertos": acertos, "total": total
+            "usuario_id": u, 
+            "assunto_nome": assunto, 
+            "area_manual": area_detectada,
+            "data_estudo": dt_str, 
+            "acertos": int(acertos), 
+            "total": int(total)
         }).execute()
         
-        # Agendar Revisão (7 dias depois)
+        # 2. Agendar Revisão (7 dias depois)
+        # Não agendamos para simulados ou banco geral
         if "Banco" not in assunto and "Simulado" not in assunto:
-            dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
+            dt_rev = (dt_obj + timedelta(days=7)).strftime("%Y-%m-%d")
             client.table("revisoes").insert({
-                "usuario_id": u, "assunto_nome": assunto, "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"
+                "usuario_id": u, 
+                "assunto_nome": assunto, 
+                "grande_area": area_detectada, # Salvamos a área aqui para garantir o retorno
+                "data_agendada": dt_rev, 
+                "tipo": "1 Semana", 
+                "status": "Pendente"
             }).execute()
 
-        # Atualizar XP
+        # 3. Atualizar XP
         status, _ = get_status_gamer(u)
         if status:
             nxp = status['xp_total'] + int(total * 2)
-            client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
-        return "✅ Registado!"
-    except Exception as e: return f"Erro ao salvar: {e}"
+            client.table("perfil_gamer").update({
+                "xp": nxp, 
+                "nivel": 1 + (nxp // 1000)
+            }).eq("usuario_id", u).execute()
+            
+        return "✅ Estudo e Revisão Salvos!"
+    except Exception as e: 
+        return f"Erro ao salvar: {str(e)}"
 
 def registrar_simulado(u, dados, data_personalizada=None):
     client = get_supabase()
     if not client: return "Erro"
-    dt = data_personalizada.strftime("%Y-%m-%d") if data_personalizada else datetime.now().strftime("%Y-%m-%d")
+    
+    dt_obj = datetime.combine(data_personalizada, datetime.min.time()) if data_personalizada else datetime.now()
+    dt_str = dt_obj.strftime("%Y-%m-%d")
+    
     tq = 0
     try:
         for area, v in dados.items():
             if v['total'] > 0:
                 tq += v['total']
                 client.table("historico").insert({
-                    "usuario_id": u, "assunto_nome": f"Simulado - {area}", "area_manual": area, "data_estudo": dt, "acertos": v['acertos'], "total": v['total']
+                    "usuario_id": u, 
+                    "assunto_nome": f"Simulado - {area}", 
+                    "area_manual": area, 
+                    "data_estudo": dt_str, 
+                    "acertos": int(v['acertos']), 
+                    "total": int(v['total'])
                 }).execute()
         
         status, _ = get_status_gamer(u)
         if status:
             nxp = status['xp_total'] + int(tq * 2.5)
             client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
-        return "✅ Simulado salvo!"
-    except: return "Erro ao salvar"
+        return "✅ Simulado registrado!"
+    except Exception as e: 
+        return f"Erro: {str(e)}"
 
 def listar_revisoes_completas(u):
     client = get_supabase()
@@ -174,9 +225,13 @@ def listar_revisoes_completas(u):
         res = client.table("revisoes").select("*").eq("usuario_id", u).execute()
         df = pd.DataFrame(res.data)
         if df.empty: return df
-        lib = listar_conteudo_videoteca()
-        area_map = lib.set_index('assunto')['grande_area'].to_dict() if not lib.empty else {}
-        df['grande_area'] = df['assunto_nome'].map(area_map).fillna('Geral')
+        
+        # Se a coluna 'grande_area' estiver vazia no banco, tentamos mapear agora
+        if 'grande_area' not in df.columns or df['grande_area'].isnull().any():
+            lib = listar_conteudo_videoteca()
+            area_map = lib.set_index('assunto')['grande_area'].to_dict() if not lib.empty else {}
+            df['grande_area'] = df['assunto_nome'].map(area_map).fillna('Geral')
+            
         return df
     except: return pd.DataFrame()
 
@@ -184,13 +239,35 @@ def concluir_revisao(rid, acertos, total):
     client = get_supabase()
     if not client: return "Erro"
     try:
+        # 1. Busca dados da revisão para não perder o nome do assunto e área
         res = client.table("revisoes").select("*").eq("id", rid).execute()
-        if not res.data: return "Erro"
+        if not res.data: return "Erro: Revisão não encontrada"
         rev = res.data[0]
+        
+        # 2. Marca como concluído
         client.table("revisoes").update({"status": "Concluido"}).eq("id", rid).execute()
+        
+        # 3. Regista o desempenho no histórico (isso gera o XP e a próxima revisão)
         registrar_estudo(rev['usuario_id'], rev['assunto_nome'], acertos, total)
-        return "✅ Feito!"
-    except: return "Erro"
+        
+        # 4. Lógica SRS para a Próxima Revisão
+        ciclo = {"1 Semana": (30, "1 Mês"), "1 Mês": (60, "2 Meses")}
+        dias, prox_tipo = ciclo.get(rev['tipo'], (None, None))
+        
+        if prox_tipo:
+            dt_prox = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
+            client.table("revisoes").insert({
+                "usuario_id": rev['usuario_id'], 
+                "assunto_nome": rev['assunto_nome'],
+                "grande_area": rev.get('grande_area', 'Geral'),
+                "data_agendada": dt_prox, 
+                "tipo": prox_tipo, 
+                "status": "Pendente"
+            }).execute()
+            
+        return f"✅ Revisão feita! Próxima: {prox_tipo}"
+    except Exception as e: 
+        return f"Erro: {str(e)}"
 
 # --- COMPATIBILIDADE ---
 def get_db(): return True
