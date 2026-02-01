@@ -7,94 +7,83 @@ from database import (
 )
 
 def render_sidebar():
-    """Barra lateral modular com gamificação, metas visuais e registros detalhados."""
+    """Barra lateral com Gamificação, Meta Diária ajustável e registros completos."""
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # Busca status para UI e progresso atual
-    status, df_m = get_status_gamer(u, nonce)
+    status, _ = get_status_gamer(u, nonce)
     q_hoje = get_progresso_hoje(u, nonce)
     
     with st.sidebar:
         st.markdown(f"### 🩺 Dr. {st.session_state.u_nome}")
         
-        # 1. PERFIL GAMER E META VISUAL
         if status:
             col1, col2 = st.columns([1, 2])
             with col1:
-                st.markdown(f"<h2 style='margin:0;'>Lvl {status['nivel']}</h2>", unsafe_allow_html=True)
-                st.caption(status['titulo'])
+                st.markdown(f"#### Lvl {status['nivel']}")
             with col2:
                 st.caption(f"XP: {status['xp_atual']}/1000")
                 st.progress(status['xp_atual']/1000)
             
             st.divider()
             
-            # --- RECURSO GRÁFICO DA META DIÁRIA ---
+            # --- META DIÁRIA COM FEEDBACK GRÁFICO ---
             meta = status['meta_diaria']
-            progresso_meta = min(q_hoje / meta, 1.0)
-            
-            st.markdown(f"🎯 **Missão Diária: {q_hoje} / {meta} q**")
-            st.progress(progresso_meta)
+            progresso = min(q_hoje / meta, 1.0)
+            st.markdown(f"🎯 **Meta Diária: {q_hoje} / {meta} q**")
+            st.progress(progresso)
             
             if q_hoje >= meta:
-                st.success("🔥 Meta Diária Batida!")
-            else:
-                st.caption(f"Faltam {meta - q_hoje} questões para o objetivo.")
-
-            # Configuração de Meta
-            with st.expander("⚙️ Ajustar Meta Diária"):
-                nova_meta = st.number_input("Novo Objetivo (questões):", 1, 500, meta)
-                if st.button("Salvar Meta"):
+                st.success("🔥 Objetivo Batido!")
+            
+            with st.expander("⚙️ Ajustar Meta"):
+                nova_meta = st.number_input("Objetivo de questões:", 1, 500, meta)
+                if st.button("Salvar Nova Meta"):
                     if update_meta_diaria(u, nova_meta):
                         st.success("Meta atualizada!")
                         st.rerun()
 
         st.divider()
-        
-        # 2. MENU NAVEGAÇÃO
         nav = st.radio("Navegação:", ["📊 Performance", "📅 Agenda SRS", "📚 Videoteca", "👤 Perfil"], label_visibility="collapsed")
         
         st.divider()
-        
-        # 3. REGISTROS (DETALHADOS)
-        st.markdown("📝 **Registar Atividade**")
-        tipo = st.selectbox("O que fez?", ["Aula por Tema", "Simulado Completo", "Banco Geral (Aleatório)"], key="sb_reg_type")
+        st.markdown("📝 **Registrar Atividade**")
+        tipo = st.selectbox("O que você fez?", ["Aula por Tema", "Simulado Geral", "Banco Geral (Livre)"], key="sb_reg_type")
         
         if tipo == "Aula por Tema":
-            t = st.selectbox("Assunto:", get_lista_assuntos_nativa(), index=None, placeholder="Escolha...")
+            t = st.selectbox("Assunto:", get_lista_assuntos_nativa(), index=None, placeholder="Selecione...")
             c1, c2 = st.columns(2)
-            acc = c1.number_input("Hits", 0, 300, 8, key="sb_hits")
+            acc = c1.number_input("Acertos", 0, 300, 8, key="sb_hits")
             tot = c2.number_input("Total", 1, 300, 10, key="sb_tot")
             if st.button("💾 Salvar Aula", use_container_width=True, type="primary"):
                 if t: st.toast(registrar_estudo(u, t, acc, tot))
-                else: st.error("Selecione um tema!")
+                else: st.error("Escolha o tema!")
 
-        elif tipo == "Simulado Completo":
-            with st.expander("📍 Áreas do Simulado", expanded=True):
+        elif tipo == "Simulado Geral":
+            with st.expander("📍 Acertos vs Total por Área", expanded=True):
                 areas = ["Cirurgia", "Clínica Médica", "G.O.", "Pediatria", "Preventiva"]
                 res_sim = {}
                 for a in areas:
                     st.markdown(f"**{a}**")
                     c1, c2 = st.columns(2)
-                    # Agora permite definir o total por área conforme solicitado
-                    a_tot = c1.number_input(f"Qtd {a}", 1, 100, 20, key=f"tot_{a}")
-                    a_acc = c2.number_input(f"Ac {a}", 0, a_tot, 15, key=f"acc_{a}")
-                    res_sim[a] = {"total": a_tot, "acertos": a_acc}
+                    # Agora permite definir o total individual de cada área médica
+                    s_tot = c1.number_input("Total", 1, 100, 20, key=f"stot_{a}")
+                    s_acc = c2.number_input("Acertos", 0, s_tot, 15, key=f"sacc_{a}")
+                    res_sim[a] = {"total": s_tot, "acertos": s_acc}
                 
                 if st.button("💾 Gravar Simulado", use_container_width=True, type="primary"):
                     st.toast(registrar_simulado(u, res_sim))
 
-        elif tipo == "Banco Geral (Aleatório)":
-            st.caption("Questões de bancos variados sem tema único.")
+        elif tipo == "Banco Geral (Livre)":
+            st.caption("Questões aleatórias de bancos de questões.")
             c1, c2 = st.columns(2)
             bg_acc = c1.number_input("Acertos", 0, 1000, 35)
             bg_tot = c2.number_input("Total", 1, 1000, 50)
-            if st.button("💾 Salvar Banco Geral", use_container_width=True, type="primary"):
+            if st.button("💾 Salvar Banco", use_container_width=True, type="primary"):
                 st.toast(registrar_estudo(u, "Banco Geral - Livre", bg_acc, bg_tot))
 
         st.divider()
-        if st.button("🚪 Sair", use_container_width=True):
+        if st.button("Sair"):
             st.session_state.logado = False
             st.rerun()
             
