@@ -12,6 +12,18 @@ st.markdown("""
     [data-testid="stSidebarNav"] {display: none;}
     .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 20px; border-bottom: 2px solid #f0f2f6; }
     .stTabs [data-baseweb="tab"] { font-size: 16px; font-weight: 600; }
+    
+    /* Estilo para a tela de login */
+    .login-container {
+        padding: 2rem;
+        border-radius: 10px;
+        background-color: #ffffff;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .login-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,28 +128,75 @@ def app_principal():
         st.error("Erro crítico durante a execução do app")
         st.code(traceback.format_exc())
 
-# --- TELA DE LOGIN ---
+# --- TELA DE LOGIN (PROFISSIONAL) ---
 def tela_login():
-    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Layout centralizado
     c1, c2, c3 = st.columns([1, 2, 1])
     
     with c2:
+        # Cabeçalho da página de login
+        st.markdown("""
+            <div class='login-header'>
+                <h1>🩺 MedPlanner Elite</h1>
+                <p>Sua jornada rumo à aprovação começa aqui.</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Container principal com abas
         with st.container(border=True):
-            st.markdown("<h2 style='text-align:center;'>🔐 Acesso MedPlanner</h2>", unsafe_allow_html=True)
-            u = st.text_input("Usuário", key="login_user")
-            p = st.text_input("Senha", type="password", key="login_pass")
+            tab_login, tab_cadastro = st.tabs(["🔐 Entrar", "✨ Criar Conta"])
             
-            if st.button("Entrar", type="primary", use_container_width=True):
-                ok, nome = verificar_login(u, p)
-                if ok:
-                    st.session_state.logado = True
-                    st.session_state.username = u
-                    st.session_state.u_nome = nome
-                    st.toast(f"Bem-vindo, {nome}!", icon="👋")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error(nome)
+            # --- ABA DE LOGIN ---
+            with tab_login:
+                st.markdown("### Bem-vindo de volta!")
+                u = st.text_input("Usuário", key="login_user", placeholder="Seu nome de usuário")
+                p = st.text_input("Senha", type="password", key="login_pass", placeholder="Sua senha secreta")
+                
+                if st.button("Acessar Plataforma", type="primary", use_container_width=True):
+                    if not u or not p:
+                        st.warning("Por favor, preencha todos os campos.")
+                    else:
+                        ok, nome = verificar_login(u, p)
+                        if ok:
+                            st.session_state.logado = True
+                            st.session_state.username = u
+                            st.session_state.u_nome = nome
+                            st.toast(f"Bem-vindo, {nome}!", icon="👋")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"Falha no login: {nome}")
+            
+            # --- ABA DE CADASTRO ---
+            with tab_cadastro:
+                st.markdown("### Novo por aqui?")
+                st.caption("Crie sua conta para começar a monitorar seus estudos.")
+                
+                new_u = st.text_input("Escolha um Usuário", key="new_user", placeholder="Ex: dr.silva")
+                new_n = st.text_input("Nome Completo", key="new_name", placeholder="Ex: João Silva")
+                new_p = st.text_input("Defina uma Senha", type="password", key="new_pass")
+                new_p2 = st.text_input("Confirme a Senha", type="password", key="new_pass2")
+                
+                if st.button("Cadastrar Gratuitamente", use_container_width=True):
+                    if not new_u or not new_n or not new_p:
+                        st.warning("Preencha todos os campos obrigatórios.")
+                    elif new_p != new_p2:
+                        st.error("As senhas não coincidem.")
+                    else:
+                        ok, msg = criar_usuario(new_u, new_p, new_n)
+                        if ok:
+                            st.success("Conta criada com sucesso! Faça login na aba 'Entrar'.")
+                            st.balloons()
+                        else:
+                            st.error(f"Erro ao criar conta: {msg}")
+
+        st.markdown("""
+            <div style='text-align: center; margin-top: 20px; color: #666;'>
+                <small>MedPlanner Elite © 2026 • Otimizando sua Residência Médica</small>
+            </div>
+        """, unsafe_allow_html=True)
 
 # Entry Point
 if st.session_state.logado:
