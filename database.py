@@ -52,6 +52,17 @@ def get_lista_assuntos_nativa():
     if df.empty: return ["Banco Geral - Livre", "Simulado - Geral"]
     return sorted(df['assunto'].unique().tolist())
 
+def pesquisar_global(termo):
+    """Realiza pesquisa textual na biblioteca nativa (necessário para videoteca.py)."""
+    df = listar_conteudo_videoteca()
+    if df.empty:
+        return df
+    mask = (
+        df['titulo'].str.contains(termo, case=False, na=False) | 
+        df['assunto'].str.contains(termo, case=False, na=False)
+    )
+    return df[mask]
+
 # ==========================================
 # 🔐 MÓDULO 2: SEGURANÇA E LOGIN
 # ==========================================
@@ -69,8 +80,8 @@ def verificar_login(u, p):
             if bcrypt.checkpw(p.encode('utf-8'), stored):
                 return True, user['nome']
         return False, "Utilizador ou senha incorretos"
-    except Exception:
-        return False, "Erro de comunicação com o servidor de segurança"
+    except Exception as e:
+        return False, f"Erro no servidor de autenticação: {str(e)}"
 
 def criar_usuario(u, p, n):
     """Regista novo utilizador e inicializa perfil gamificado no Supabase."""
