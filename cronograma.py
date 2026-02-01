@@ -2,9 +2,27 @@ import streamlit as st
 import pandas as pd
 from database import get_cronograma_status, salvar_cronograma_status, normalizar_area
 
+def auto_save_callback(u, dados_brutos):
+    """
+    Função chamada automaticamente toda vez que um checkbox é alterado.
+    Lê o estado atual da sessão e salva no banco imediatamente.
+    """
+    novo_estado = {}
+    for item in dados_brutos:
+        nome_aula = item[0] if isinstance(item, tuple) else item
+        key = f"chk_{nome_aula}"
+        # O session_state já contém o valor novo (True/False) do checkbox que acabou de ser clicado
+        if st.session_state.get(key, False):
+            novo_estado[nome_aula] = True
+            
+    # Salva silenciosamente no banco
+    salvar_cronograma_status(u, novo_estado)
+    # Feedback visual discreto
+    st.toast("Salvo automaticamente!", icon="✅")
+
 def render_cronograma(conn_ignored):
     st.header("🗂️ Cronograma Extensivo")
-    st.caption("Marque as aulas concluídas e clique em 'Salvar Progresso'.")
+    st.caption("Seu progresso é salvo automaticamente ao marcar os itens.")
 
     u = st.session_state.username
     
@@ -21,27 +39,15 @@ def render_cronograma(conn_ignored):
         return
 
     # 2. Carregar estado salvo
+    # Como o callback roda antes do rerun, o get aqui já trará o dado atualizado do banco
     estado_salvo = get_cronograma_status(u)
     
-    # Botão de Salvar Topo
-    if st.button("💾 Salvar Progresso", key="btn_save_top", type="primary"):
-        novo_estado = {}
-        for item in dados_brutos:
-            nome_aula = item[0] if isinstance(item, tuple) else item
-            key = f"chk_{nome_aula}"
-            if st.session_state.get(key, False):
-                novo_estado[nome_aula] = True
-        
-        if salvar_cronograma_status(u, novo_estado):
-            st.toast("Cronograma salvo!", icon="✅")
-            st.rerun()
-
     # 3. Organizar dados
     df = pd.DataFrame(dados_brutos, columns=['Aula', 'Area'])
     df['Area'] = df['Area'].apply(normalizar_area)
     areas = sorted(df['Area'].unique())
 
-    # Barra de Progresso
+    # Barra de Progresso Geral
     total_aulas = len(df)
     concluidas = sum(1 for k in estado_salvo if estado_salvo.get(k))
     progresso = concluidas / total_aulas if total_aulas > 0 else 0
@@ -55,17 +61,12 @@ def render_cronograma(conn_ignored):
         with st.expander(f"📘 {area} ({concluidas_area}/{len(aulas_area)})"):
             for aula in aulas_area:
                 is_checked = estado_salvo.get(aula, False)
-                st.checkbox(aula, value=is_checked, key=f"chk_{aula}")
-
-    # Botão de Salvar Final
-    if st.button("💾 Salvar Progresso", key="btn_save_bottom"):
-        novo_estado = {}
-        for item in dados_brutos:
-            nome_aula = item[0] if isinstance(item, tuple) else item
-            key = f"chk_{nome_aula}"
-            if st.session_state.get(key, False):
-                novo_estado[nome_aula] = True
-        
-        if salvar_cronograma_status(u, novo_estado):
-            st.toast("Cronograma salvo!", icon="✅")
-            st.rerun()
+                
+                # Checkbox com Auto-Save
+                st.checkbox(
+                    aula, 
+                    value=is_checked, 
+                    key=f"chk_{aula}",
+                    on_change=auto_save_callback, # Aciona o salvamento ao mudar
+                    args=(u, dados_brutos)        # Passa os argumentos necessários
+                )
