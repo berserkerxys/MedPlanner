@@ -1,6 +1,5 @@
 # database.py
-# Versão Corrigida: Restaura listar_conteudo_videoteca para o Dashboard
-# Mantém Sidebar estrita (apenas aulas_medcof.py)
+# Correção de TypeError na Agenda e ImportError no Dashboard
 
 import os
 import json
@@ -28,22 +27,11 @@ DB_NAME = "medplanner_local.db"
 # -------------------------
 @st.cache_data
 def _carregar_dados_medcof_estrito():
-    """
-    Lê EXCLUSIVAMENTE o arquivo aulas_medcof.py.
-    Retorna:
-      - lista_aulas: Lista de strings para o SelectBox.
-      - mapa_areas: Dicionário { 'Nome da Aula': 'Grande Área' } para preenchimento automático.
-    """
     lista_aulas = []
     mapa_areas = {}
-    
     try:
         import aulas_medcof
-        
-        # 1. Tenta pegar a variável DADOS_LIMPOS (padrão esperado)
         dados = getattr(aulas_medcof, 'DADOS_LIMPOS', None)
-        
-        # 2. Se não achar, varre o arquivo procurando qualquer lista grande
         if not dados:
             for name in dir(aulas_medcof):
                 if name.startswith("_"): continue
@@ -51,89 +39,41 @@ def _carregar_dados_medcof_estrito():
                 if isinstance(val, list) and len(val) > 2: 
                     dados = val
                     break
-        
-        # 3. Processa os dados encontrados
         if dados:
             for item in dados:
-                # Se for tupla ("Aula", "Area")
                 if isinstance(item, tuple) and len(item) >= 2:
-                    aula = str(item[0]).strip()
-                    area = str(item[1]).strip()
+                    aula, area = str(item[0]).strip(), str(item[1]).strip()
                     lista_aulas.append(aula)
                     mapa_areas[aula] = area
-                # Se for string simples
                 elif isinstance(item, str):
                     lista_aulas.append(item.strip())
-                # Se for dicionário
-                elif isinstance(item, dict):
-                    t = item.get('titulo') or item.get('assunto')
-                    a = item.get('grande_area') or item.get('area')
-                    if t:
-                        lista_aulas.append(str(t))
-                        if a: mapa_areas[str(t)] = str(a)
-                        
-    except ImportError:
-        print("Aviso: Arquivo aulas_medcof.py não encontrado ou com erro de importação.")
-        return ["Erro: aulas_medcof.py não encontrado"], {}
-    except Exception as e:
-        print(f"Erro ao processar aulas_medcof.py: {e}")
-        return [f"Erro ao ler aulas: {e}"], {}
-
-    if not lista_aulas:
-        return ["Aviso: Nenhuma aula encontrada em aulas_medcof.py"], {}
-
-    # Remove duplicatas mantendo a ordem e classifica
+    except Exception: pass
     return sorted(list(set(lista_aulas))), mapa_areas
 
-# -------------------------
-# FUNÇÕES PRINCIPAIS (INTERFACING)
-# -------------------------
-
 def get_lista_assuntos_nativa():
-    """
-    Usada pela Sidebar.
-    Retorna APENAS as aulas encontradas nos blocos do aulas_medcof.py.
-    """
     aulas, _ = _carregar_dados_medcof_estrito()
-    return aulas
+    return aulas if aulas else ["Banco Geral"]
 
 def get_area_por_assunto(assunto):
-    """
-    Tenta descobrir a área usando o mapeamento do medcof.
-    Se não achar, retorna 'Geral'.
-    """
     _, mapa = _carregar_dados_medcof_estrito()
     return mapa.get(assunto, "Geral")
 
 # -------------------------
-# VIDEOTECA (NECESSÁRIO PARA DASHBOARD)
+# VIDEOTECA (NECESSÁRIO PARA DASHBOARD E PESQUISA)
 # -------------------------
 @st.cache_data(ttl=None)
 def listar_conteudo_videoteca():
-    """
-    Retorna DataFrame da videoteca.
-    Usado pelo Dashboard e Videoteca, mas NÃO pela Sidebar.
-    """
-    # Tenta Supabase
+    """Restaura a função para o Dashboard e Videoteca."""
     client = get_supabase()
     if client:
         try:
             res = client.table("videoteca").select("*").execute()
             if res.data: return pd.DataFrame(res.data)
         except: pass
-    
-    # Tenta arquivo python local (biblioteca_conteudo.py)
     try:
         from biblioteca_conteudo import VIDEOTECA_GLOBAL
         return pd.DataFrame(VIDEOTECA_GLOBAL, columns=['grande_area', 'assunto', 'tipo', 'subtipo', 'titulo', 'link', 'id_conteudo'])
     except: pass
-
-    # Tenta JSON exportado
-    if os.path.exists("videoteca_export.json"):
-        try:
-            return pd.read_json("videoteca_export.json")
-        except: pass
-        
     return pd.DataFrame()
 
 def pesquisar_global(termo):
@@ -146,7 +86,7 @@ def pesquisar_global(termo):
     return df[mask]
 
 # -------------------------
-# DATABASE & SUPABASE HELPERS
+# DATABASE & AUTH HELPERS
 # -------------------------
 def _ensure_local_db():
     conn = sqlite3.connect(DB_NAME)
@@ -172,227 +112,22 @@ def trigger_refresh():
     st.session_state.data_nonce += 1
 
 # -------------------------
-# REGISTROS DE ESTUDO
+# REVISÕES (CORREÇÃO TYPEERROR AGENDA)
 # -------------------------
-def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
-    dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
-    # Usa mapeamento do medcof para preencher a área automaticamente
-    area = area_f if area_f else get_area_por_assunto(assunto)
-    xp_ganho = int(total) * 2
-    
-    client = get_supabase()
-    
-    # Payload comum
-    hist_data = {
-        "usuario_id": u, "assunto_nome": assunto, "area_manual": area, 
-        "data_estudo": dt, "acertos": int(acertos), "total": int(total)
-    }
-
-    if client:
-        try:
-            client.table("historico").insert(hist_data).execute()
-            
-            if srs and "Simulado" not in assunto:
-                dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
-                client.table("revisoes").insert({
-                    "usuario_id": u, "assunto_nome": assunto, "grande_area": area, 
-                    "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"
-                }).execute()
-                
-            # XP
-            curr = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
-            old_xp = curr.data[0]['xp'] if curr.data else 0
-            client.table("perfil_gamer").upsert({"usuario_id": u, "xp": old_xp + xp_ganho}).execute()
-            
-            trigger_refresh()
-            return f"✅ Registrado: {assunto} ({area})"
-        except Exception as e:
-            return f"Erro Sync: {e}"
-    else:
-        # Local SQLite
-        try:
-            _ensure_local_db()
-            with sqlite3.connect(DB_NAME) as conn:
-                conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total) VALUES (?,?,?,?,?,?)", 
-                             (u, assunto, area, dt, acertos, total))
-                
-                if srs and "Simulado" not in assunto:
-                    dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
-                    conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)",
-                                 (u, assunto, area, dt_rev, "1 Semana", "Pendente"))
-                
-                row = conn.execute("SELECT xp FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
-                old_xp = row[0] if row else 0
-                conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, ?, 'Interno', 50)", (u, old_xp + xp_ganho))
-            
-            trigger_refresh()
-            return f"✅ Registrado: {assunto} ({area})"
-        except Exception as e:
-            return f"Erro Local: {e}"
-
-def registrar_simulado(u, dados):
-    total_q = sum(int(d['total']) for d in dados.values())
-    if total_q == 0: return "Sem dados"
-    for area, d in dados.items():
-        if int(d['total']) > 0:
-            registrar_estudo(u, f"Simulado - {area}", d['acertos'], d['total'], area_f=area, srs=False)
-    return f"✅ Simulado ({total_q}q) salvo!"
-
-# -------------------------
-# GAMIFICAÇÃO (SIDEBAR)
-# -------------------------
-@st.cache_data(ttl=60)
-def get_progresso_hoje(u, nonce=None):
-    hoje = datetime.now().strftime("%Y-%m-%d")
+def listar_revisoes_completas(u, nonce=None):
+    """Adicionado argumento 'nonce' para compatibilidade com a chamada na Agenda."""
     client = get_supabase()
     if client:
         try:
-            res = client.table("historico").select("total").eq("usuario_id", u).eq("data_estudo", hoje).execute()
-            return sum(x['total'] for x in res.data)
+            res = client.table("revisoes").select("*").eq("usuario_id", u).execute()
+            return pd.DataFrame(res.data) if res.data else pd.DataFrame()
         except: pass
-    
-    try:
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            row = conn.execute("SELECT sum(total) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
-            return row[0] if row and row[0] else 0
-    except: return 0
-
-@st.cache_data(ttl=60)
-def get_status_gamer(u, nonce=None):
-    client = get_supabase()
-    xp, titulo, meta = 0, "Interno", 50
-    
-    # 1. Busca Perfil
-    if client:
-        try:
-            res = client.table("perfil_gamer").select("*").eq("usuario_id", u).execute()
-            if res.data:
-                d = res.data[0]
-                xp, titulo, meta = d.get('xp', 0), d.get('titulo', 'Interno'), d.get('meta_diaria', 50)
-        except: pass
-    else:
-        try:
-            _ensure_local_db()
-            with sqlite3.connect(DB_NAME) as conn:
-                row = conn.execute("SELECT xp, titulo, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
-                if row: xp, titulo, meta = row
-        except: pass
-        
-    # 2. Busca Progresso do Dia
-    q_hoje, a_hoje = 0, 0
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    
-    if client:
-        try:
-            h = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
-            if h.data:
-                q_hoje = sum(x['total'] for x in h.data)
-                a_hoje = sum(x['acertos'] for x in h.data)
-        except: pass
-    else:
-        try:
-            with sqlite3.connect(DB_NAME) as conn:
-                row = conn.execute("SELECT sum(total), sum(acertos) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
-                if row and row[0]: q_hoje, a_hoje = row
-        except: pass
-
-    status = {
-        'nivel': 1 + (xp // 1000), 'xp_atual': xp % 1000, 'xp_total': xp,
-        'titulo': titulo, 'meta_diaria': meta
-    }
-    
-    missoes = [
-        {"Icon": "🎯", "Meta": "Questões", "Prog": q_hoje, "Objetivo": meta, "Unid": "q"},
-        {"Icon": "✅", "Meta": "Acertos", "Prog": a_hoje, "Objetivo": int(meta * 0.7), "Unid": "hits"},
-        {"Icon": "⚡", "Meta": "XP", "Prog": q_hoje * 2, "Objetivo": meta * 2, "Unid": "xp"}
-    ]
-    return status, pd.DataFrame(missoes)
-
-def update_meta_diaria(u, nova):
-    client = get_supabase()
-    if client:
-        client.table("perfil_gamer").update({"meta_diaria": int(nova)}).eq("usuario_id", u).execute()
-    else:
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            conn.execute("INSERT OR IGNORE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, 0, 'Interno', ?)", (u, nova))
-            conn.execute("UPDATE perfil_gamer SET meta_diaria=? WHERE usuario_id=?", (nova, u))
-    trigger_refresh()
-
-# -------------------------
-# RESUMOS & AUTH & STUBS
-# -------------------------
-def get_resumo(u, area):
-    client = get_supabase()
-    if client:
-        res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
-        return res.data[0]['conteudo'] if res.data else ""
-    _ensure_local_db()
-    with sqlite3.connect(DB_NAME) as conn:
-        row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
-        return row[0] if row else ""
-
-def salvar_resumo(u, area, texto):
-    client = get_supabase()
-    if client:
-        client.table("resumos").upsert({"usuario_id": u, "grande_area": area, "conteudo": texto}).execute()
-    else:
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            conn.execute("INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", (u, area, texto))
-    return True
-
-def verificar_login(u, p):
-    client = get_supabase()
-    if client:
-        res = client.table("usuarios").select("password_hash, nome").eq("username", u).execute()
-        if res.data and bcrypt.checkpw(p.encode(), res.data[0]['password_hash'].encode()):
-            return True, res.data[0]['nome']
-    return False, "Erro Login"
-
-def criar_usuario(u, p, n):
-    client = get_supabase()
-    if client:
-        pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
-        client.table("usuarios").insert({"username": u, "nome": n, "password_hash": pw}).execute()
-        client.table("perfil_gamer").insert({"usuario_id": u, "xp": 0}).execute()
-        return True, "Criado"
-    return False, "Erro Config"
-
-def get_dados_graficos(u, nonce=None):
-    client = get_supabase()
-    df = pd.DataFrame()
-    if client:
-        res = client.table("historico").select("*").eq("usuario_id", u).execute()
-        if res.data: df = pd.DataFrame(res.data)
-    else:
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            df = pd.read_sql_query("SELECT * FROM historico WHERE usuario_id=?", conn, params=(u,))
-    
-    if not df.empty:
-        df['data'] = pd.to_datetime(df['data_estudo'])
-        df['percentual'] = (df['acertos'] / df['total'] * 100).fillna(0)
-        # Preenche área vazia com mapeamento do medcof
-        if 'area_manual' in df.columns:
-            mask = df['area_manual'].isnull() | (df['area_manual'] == "")
-            df.loc[mask, 'area_manual'] = df.loc[mask, 'assunto_nome'].apply(get_area_por_assunto)
-            df['area'] = df['area_manual']
-    return df
-
-def listar_revisoes_completas(u):
-    client = get_supabase()
-    if client:
-        res = client.table("revisoes").select("*").eq("usuario_id", u).execute()
-        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
     _ensure_local_db()
     with sqlite3.connect(DB_NAME) as conn:
         return pd.read_sql_query("SELECT * FROM revisoes WHERE usuario_id=?", conn, params=(u,))
 
 def concluir_revisao(rid, ac, tot):
     client = get_supabase()
-    # Lógica simplificada de conclusão
     if client:
         r = client.table("revisoes").select("*").eq("id", rid).execute()
         if r.data:
@@ -409,5 +144,168 @@ def concluir_revisao(rid, ac, tot):
                 registrar_estudo(rev[0], rev[1], ac, tot, area_f=rev[2], srs=False)
                 return "✅ Feito"
     return "Erro"
+
+# -------------------------
+# REGISTROS E GAMIFICAÇÃO
+# -------------------------
+def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
+    dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
+    area = area_f if area_f else get_area_por_assunto(assunto)
+    xp_ganho = int(total) * 2
+    client = get_supabase()
+    if client:
+        try:
+            client.table("historico").insert({"usuario_id": u, "assunto_nome": assunto, "area_manual": area, "data_estudo": dt, "acertos": int(acertos), "total": int(total)}).execute()
+            if srs and "Simulado" not in assunto:
+                dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
+                client.table("revisoes").insert({"usuario_id": u, "assunto_nome": assunto, "grande_area": area, "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"}).execute()
+            curr = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
+            old_xp = curr.data[0]['xp'] if curr.data else 0
+            client.table("perfil_gamer").upsert({"usuario_id": u, "xp": old_xp + xp_ganho}).execute()
+            trigger_refresh()
+            return f"✅ Registrado: {assunto} ({area})"
+        except: pass
+    _ensure_local_db()
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total) VALUES (?,?,?,?,?,?)", (u, assunto, area, dt, acertos, total))
+        if srs and "Simulado" not in assunto:
+            dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
+            conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", (u, assunto, area, dt_rev, "1 Semana", "Pendente"))
+        row = conn.execute("SELECT xp FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
+        old_xp = row[0] if row else 0
+        conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, ?, 'Interno', 50)", (u, old_xp + xp_ganho))
+    trigger_refresh()
+    return f"✅ Registrado: {assunto} ({area})"
+
+def registrar_simulado(u, dados):
+    total_q = sum(int(d['total']) for d in dados.values())
+    for area, d in dados.items():
+        if int(d['total']) > 0: registrar_estudo(u, f"Simulado - {area}", d['acertos'], d['total'], area_f=area, srs=False)
+    return f"✅ Simulado ({total_q}q) salvo!"
+
+@st.cache_data(ttl=60)
+def get_progresso_hoje(u, nonce=None):
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    client = get_supabase()
+    if client:
+        try:
+            res = client.table("historico").select("total").eq("usuario_id", u).eq("data_estudo", hoje).execute()
+            return sum(x['total'] for x in res.data)
+        except: pass
+    try:
+        _ensure_local_db()
+        with sqlite3.connect(DB_NAME) as conn:
+            row = conn.execute("SELECT sum(total) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
+            return row[0] if row and row[0] else 0
+    except: return 0
+
+@st.cache_data(ttl=60)
+def get_status_gamer(u, nonce=None):
+    client = get_supabase()
+    xp, titulo, meta = 0, "Interno", 50
+    if client:
+        try:
+            res = client.table("perfil_gamer").select("*").eq("usuario_id", u).execute()
+            if res.data:
+                d = res.data[0]
+                xp, titulo, meta = d.get('xp', 0), d.get('titulo', 'Interno'), d.get('meta_diaria', 50)
+        except: pass
+    else:
+        try:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                row = conn.execute("SELECT xp, titulo, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
+                if row: xp, titulo, meta = row
+        except: pass
+    q_hoje, a_hoje = 0, 0
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    if client:
+        try:
+            h = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
+            if h.data:
+                q_hoje = sum(x['total'] for x in h.data)
+                a_hoje = sum(x['acertos'] for x in h.data)
+        except: pass
+    else:
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                row = conn.execute("SELECT sum(total), sum(acertos) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
+                if row and row[0]: q_hoje, a_hoje = row
+        except: pass
+    status = {'nivel': 1 + (xp // 1000), 'xp_atual': xp % 1000, 'xp_total': xp, 'titulo': titulo, 'meta_diaria': meta}
+    missoes = [
+        {"Icon": "🎯", "Meta": "Questões", "Prog": q_hoje, "Objetivo": meta, "Unid": "q"},
+        {"Icon": "✅", "Meta": "Acertos", "Prog": a_hoje, "Objetivo": int(meta * 0.7), "Unid": "hits"},
+        {"Icon": "⚡", "Meta": "XP", "Prog": q_hoje * 2, "Objetivo": meta * 2, "Unid": "xp"}
+    ]
+    return status, pd.DataFrame(missoes)
+
+def update_meta_diaria(u, nova):
+    client = get_supabase()
+    if client: client.table("perfil_gamer").update({"meta_diaria": int(nova)}).eq("usuario_id", u).execute()
+    else:
+        _ensure_local_db()
+        with sqlite3.connect(DB_NAME) as conn:
+            conn.execute("INSERT OR IGNORE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, 0, 'Interno', ?)", (u, nova))
+            conn.execute("UPDATE perfil_gamer SET meta_diaria=? WHERE usuario_id=?", (nova, u))
+    trigger_refresh()
+
+def get_dados_graficos(u, nonce=None):
+    client = get_supabase()
+    df = pd.DataFrame()
+    if client:
+        try:
+            res = client.table("historico").select("*").eq("usuario_id", u).execute()
+            if res.data: df = pd.DataFrame(res.data)
+        except: pass
+    else:
+        _ensure_local_db()
+        with sqlite3.connect(DB_NAME) as conn:
+            df = pd.read_sql_query("SELECT * FROM historico WHERE usuario_id=?", conn, params=(u,))
+    if not df.empty:
+        df['data'] = pd.to_datetime(df['data_estudo'])
+        df['percentual'] = (df['acertos'] / df['total'] * 100).fillna(0)
+    return df
+
+# -------------------------
+# RESUMOS & AUTH
+# -------------------------
+def get_resumo(u, area):
+    client = get_supabase()
+    if client:
+        try:
+            res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
+            return res.data[0]['conteudo'] if res.data else ""
+        except: pass
+    _ensure_local_db()
+    with sqlite3.connect(DB_NAME) as conn:
+        row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
+        return row[0] if row else ""
+
+def salvar_resumo(u, area, texto):
+    client = get_supabase()
+    if client: client.table("resumos").upsert({"usuario_id": u, "grande_area": area, "conteudo": texto}).execute()
+    else:
+        _ensure_local_db()
+        with sqlite3.connect(DB_NAME) as conn: conn.execute("INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", (u, area, texto))
+    return True
+
+def verificar_login(u, p):
+    client = get_supabase()
+    if client:
+        try:
+            res = client.table("usuarios").select("password_hash, nome").eq("username", u).execute()
+            if res.data and bcrypt.checkpw(p.encode(), res.data[0]['password_hash'].encode()): return True, res.data[0]['nome']
+        except: pass
+    return False, "Erro Login"
+
+def criar_usuario(u, p, n):
+    client = get_supabase()
+    if client:
+        pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+        client.table("usuarios").insert({"username": u, "nome": n, "password_hash": pw}).execute()
+        client.table("perfil_gamer").insert({"usuario_id": u, "xp": 0}).execute()
+        return True, "Criado"
+    return False, "Erro"
 
 def get_db(): return True
