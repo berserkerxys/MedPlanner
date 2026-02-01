@@ -11,24 +11,19 @@ import os
 if not firebase_admin._apps:
     try:
         if "firebase" in st.secrets:
-            # Nuvem
             key_dict = dict(st.secrets["firebase"])
             key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
             cred = credentials.Certificate(key_dict)
             firebase_admin.initialize_app(cred)
         elif os.path.exists("firebase_key.json"):
-            # Local
             cred = credentials.Certificate("firebase_key.json")
             firebase_admin.initialize_app(cred)
     except Exception as e:
-        # Silencioso para não quebrar a UI, o app.py checa get_db()
         print(f"Erro Firebase Init: {e}")
 
 def get_db():
-    try:
-        return firestore.client()
-    except:
-        return None
+    try: return firestore.client()
+    except: return None
 
 # ==========================================
 # ⚙️ SEED
@@ -82,8 +77,49 @@ def criar_usuario(u, p, n):
     return True, "Criado!"
 
 # ==========================================
-# 🎮 & 📊 ANALYTICS
+# 📊 ANALYTICS & DASHBOARD (FUNÇÃO QUE FALTAVA)
 # ==========================================
+
+def get_dados_graficos(u):
+    """
+    Baixa histórico do Firestore e faz o 'JOIN' com assuntos manualmente
+    para alimentar os gráficos do Dashboard.
+    """
+    db = get_db()
+    
+    # 1. Pega histórico do usuário
+    hist_ref = db.collection('historico').where('usuario_id', '==', u).stream()
+    hist_data = [d.to_dict() for d in hist_ref]
+    
+    if not hist_data: return pd.DataFrame()
+    
+    # 2. Pega mapa de assuntos (ID -> Area)
+    # Cacheamos isso em memória para ser rápido
+    assuntos_ref = db.collection('assuntos').stream()
+    assuntos_map = {d.id: d.to_dict() for d in assuntos_ref}
+    
+    clean_data = []
+    for h in hist_data:
+        aid = h.get('assunto_id')
+        # Tenta achar o assunto pelo ID
+        subject = assuntos_map.get(str(aid))
+        
+        area = "Outros"
+        if subject:
+            area = subject.get('grande_area', 'Outros')
+            # Padronização visual
+            if "Gineco" in area: area = "G.O."
+            
+        clean_data.append({
+            'data_estudo': h.get('data_estudo'),
+            'acertos': h.get('acertos', 0),
+            'total': h.get('total', 0),
+            'percentual': h.get('percentual', 0),
+            'grande_area': area
+        })
+        
+    return pd.DataFrame(clean_data)
+
 def get_progresso_hoje(u):
     db = get_db()
     hoje = datetime.now().strftime("%Y-%m-%d")
@@ -96,13 +132,12 @@ def get_status_gamer(u):
     if not doc.exists: return None, None
     d = doc.to_dict()
     
-    # Nível simplificado
     xp = d.get('xp', 0)
     nivel = 1 + (xp // 1000)
     prox = nivel * 1000
     
     p = {'nivel': nivel, 'xp_atual': xp, 'xp_total': xp, 'titulo': d.get('titulo', 'Calouro'), 'xp_proximo': prox}
-    return p, pd.DataFrame() # Missões vazias por enquanto para evitar erro
+    return p, pd.DataFrame() # Missões vazias por enquanto
 
 def adicionar_xp(u, qtd):
     db = get_db()
@@ -115,14 +150,29 @@ def adicionar_xp(u, qtd):
 # ==========================================
 # 📝 REGISTRO
 # ==========================================
+def get_assuntos_dict():
+    db = get_db()
+    docs = db.collection('assuntos').stream()
+    return {d.id: d.to_dict() for d in docs}
+
+def get_assunto_id_by_name(nome):
+    db = get_db()
+    docs = list(db.collection('assuntos').where('nome', '==', nome).limit(1).stream())
+    if docs: return docs[0].id, docs[0].to_dict().get('grande_area')
+    
+    area = "Geral"
+    if "Simulado" in nome: 
+        try: area = nome.split(" - ")[1]
+        except: pass
+    elif "Banco" in nome: area = "Banco Geral"
+        
+    ref = db.collection('assuntos').add({'nome': nome, 'grande_area': area})
+    return ref[1].id, area
+
 def registrar_estudo(u, assunto, acertos, total, data_personalizada=None):
     db = get_db()
+    aid, area = get_assunto_id_by_name(assunto)
     dt = data_personalizada.strftime("%Y-%m-%d")
-    
-    # Busca/Cria Assunto
-    docs = list(db.collection('assuntos').where('nome', '==', assunto).stream())
-    if docs: aid = docs[0].id
-    else: aid = db.collection('assuntos').add({'nome': assunto, 'grande_area': 'Geral'})[1].id
     
     db.collection('historico').add({
         'usuario_id': u, 'assunto_id': aid, 'data_estudo': dt,
@@ -143,23 +193,17 @@ def registrar_simulado(u, dados, data_personalizada=None):
     db = get_db()
     dt = data_personalizada.strftime("%Y-%m-%d")
     batch = db.batch()
-    
     tq = 0
     for area, v in dados.items():
         if v['total'] > 0:
             tq += v['total']
             nome = f"Simulado - {area}"
-            # Busca simples
-            docs = list(db.collection('assuntos').where('nome', '==', nome).stream())
-            if docs: aid = docs[0].id
-            else: aid = db.collection('assuntos').add({'nome': nome, 'grande_area': area})[1].id
-            
+            aid, _ = get_assunto_id_by_name(nome)
             ref = db.collection('historico').document()
             batch.set(ref, {
                 'usuario_id': u, 'assunto_id': aid, 'data_estudo': dt,
                 'acertos': v['acertos'], 'total': v['total'], 'percentual': (v['acertos']/v['total']*100)
             })
-            
     batch.commit()
     adicionar_xp(u, int(tq * 2.5))
     return "✅ Simulado Salvo!"
@@ -172,9 +216,7 @@ def listar_revisoes_completas(u):
     revs = list(db.collection('revisoes').where('usuario_id', '==', u).stream())
     if not revs: return pd.DataFrame()
     
-    # Cache assuntos
-    assuntos = {d.id: d.to_dict() for d in db.collection('assuntos').stream()}
-    
+    assuntos = get_assuntos_dict()
     data = []
     for r in revs:
         rd = r.to_dict()
@@ -185,7 +227,7 @@ def listar_revisoes_completas(u):
         })
     return pd.DataFrame(data)
 
-def concluir_revisao(rid, a, t):
+def concluir_revisao(rid, acertos, total):
     db = get_db()
     ref = db.collection('revisoes').document(rid)
     ref.update({'status': 'Concluido'})
@@ -196,7 +238,7 @@ def listar_conteudo_videoteca():
     db = get_db()
     docs = db.collection('conteudos').stream()
     data = []
-    assuntos = {d.id: d.to_dict() for d in db.collection('assuntos').stream()}
+    assuntos = get_assuntos_dict()
     for doc in docs:
         d = doc.to_dict()
         ad = assuntos.get(d['assunto_id'], {'nome': '?', 'grande_area': 'Outros'})
