@@ -7,7 +7,7 @@ def render_videoteca(conn_ignored):
     
     # --- 1. CONFIGURAÇÃO DE ESTADO (PAGINAÇÃO) ---
     # Define quantos assuntos são carregados por vez (Lote)
-    BATCH_SIZE = 5 
+    BATCH_SIZE = 10  # Aumentei um pouco para desktop, mas leve para mobile
     
     if 'video_limit' not in st.session_state: 
         st.session_state.video_limit = BATCH_SIZE
@@ -28,8 +28,6 @@ def render_videoteca(conn_ignored):
     termo = st.text_input("🔍 Pesquisar aula...", placeholder="Ex: Diabetes, Trauma...", value=st.session_state.video_last_search)
     
     lista_areas = ["Todas"] + sorted(df['grande_area'].unique().tolist())
-    # O st.pills é ótimo para mobile, mas se não estiver disponível na versão, use selectbox
-    # escolha_area = st.pills("Filtrar por Área:", lista_areas, default=st.session_state.video_last_area) # Streamlit mais novo
     escolha_area = st.selectbox("Filtrar por Área:", lista_areas, index=lista_areas.index(st.session_state.video_last_area) if st.session_state.video_last_area in lista_areas else 0)
 
     # --- 4. LÓGICA DE RESET DE PAGINAÇÃO ---
@@ -62,22 +60,26 @@ def render_videoteca(conn_ignored):
     # Fatiamento: Pega apenas até o limite atual
     assuntos_visiveis = assuntos_unicos[:st.session_state.video_limit]
     
-    st.markdown(f"**Exibindo {len(assuntos_visiveis)} de {total_assuntos} tópicos**")
+    st.caption(f"Mostrando **{len(assuntos_visiveis)}** de **{total_assuntos}** tópicos disponíveis")
     
     for assunto in assuntos_visiveis:
         itens = df_filtered[df_filtered['assunto'] == assunto]
         qtd = len(itens)
-        area_label = itens.iloc[0]['grande_area']
         
-        with st.expander(f"🔹 {assunto} ({qtd})", expanded=False):
+        # O expander fechado (expanded=False) é leve para o navegador
+        with st.expander(f"🔹 {assunto} ({qtd} aulas)", expanded=False):
+            # O conteúdo aqui dentro só é renderizado visualmente ao abrir
             for _, row in itens.iterrows():
-                c1, c2 = st.columns([0.8, 0.2])
-                with c1:
-                    icone = "🎥" if row['tipo'] == 'Video' else "📄"
-                    st.write(f"{icone} {row['titulo']}")
-                    st.caption(f"{row['subtipo']}")
-                with c2:
-                    st.link_button("Abrir", row['link'], use_container_width=True)
+                # Container individual para cada aula
+                with st.container(border=True):
+                    c1, c2 = st.columns([0.85, 0.15])
+                    with c1:
+                        icone = "🎥" if row['tipo'] == 'Video' else "📄"
+                        st.markdown(f"**{icone} {row['titulo']}**")
+                        if row['subtipo']:
+                            st.caption(f"{row['subtipo']}")
+                    with c2:
+                        st.link_button("Abrir", row['link'], use_container_width=True)
 
     # --- 7. BOTÃO "CARREGAR MAIS" ---
     if len(assuntos_visiveis) < total_assuntos:
@@ -85,7 +87,7 @@ def render_videoteca(conn_ignored):
         col_load_1, col_load_2, col_load_3 = st.columns([1, 2, 1])
         with col_load_2:
             remaining = total_assuntos - len(assuntos_visiveis)
-            # Botão grande e chamativo
-            if st.button(f"⬇️ Carregar mais ({remaining} restantes)", use_container_width=True, type="primary"):
+            # Botão grande e chamativo para carregar o próximo lote
+            if st.button(f"⬇️ Carregar mais ({remaining} tópicos)", use_container_width=True, type="primary"):
                 st.session_state.video_limit += BATCH_SIZE
                 st.rerun()
