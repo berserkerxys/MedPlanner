@@ -7,65 +7,53 @@ def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    status, df_missoes = get_status_gamer(u, nonce)
+    status, df_m = get_status_gamer(u, nonce)
     
-    # 1. Cabeçalho de Gamificação
-    if status:
-        st.markdown(f"### Nível {status['nivel']} • {status['titulo']}")
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            progress = status['xp_atual'] / status['xp_proximo']
-            st.progress(progress, text=f"XP: {status['xp_atual']} / {status['xp_proximo']}")
-        with col2:
-            st.metric("Total XP", f"{status['xp_total']} pts")
-
-    st.divider()
-
-    # 2. SEÇÃO DE MISSÕES (CORRIGIDA)
-    st.subheader("🚀 Missões do Dia")
-    if not df_missoes.empty:
-        cols = st.columns(len(df_missoes))
-        for i, row in df_missoes.iterrows():
+    # 1. MISSÕES (UI FIX)
+    st.subheader("🚀 Missões Ativas")
+    if not df_m.empty:
+        cols = st.columns(3)
+        for i, row in df_m.iterrows():
             with cols[i]:
-                percent = min(row['Progresso'] / row['Meta'], 1.0)
-                st.markdown(f"**{row['Icon']} {row['Missão']}**")
-                st.markdown(f"**{row['Progresso']}** / {row['Meta']} {row['Unid']}")
-                st.progress(percent)
+                st.markdown(f"**{row['Icon']} {row['Meta']}**")
+                prog = min(row['Prog'] / row['Objetivo'], 1.0)
+                st.markdown(f"<small>{row['Prog']} / {row['Objetivo']}</small>", unsafe_allow_html=True)
+                st.progress(prog)
     
     st.divider()
-
-    # 3. GRÁFICOS MELHORADOS
+    
+    # 2. GRÁFICOS PROFISSIONAIS (Cores Distintas)
     df = get_dados_graficos(u, nonce)
     if not df.empty:
-        st.subheader("📈 Análise de Performance")
+        c1, c2 = st.columns(2)
         
-        tab_evo, tab_area = st.tabs(["Evolução Temporal", "Aproveitamento por Área"])
-        
-        with tab_evo:
-            # Gráfico de Evolução Otimizado
-            df_day = df.groupby(df['data'].dt.date)['percentual'].mean().reset_index()
-            fig_evo = px.line(df_day, x='data', y='percentual', 
-                             title="Média de Acertos Diária",
-                             markers=True, line_shape="spline",
-                             color_discrete_sequence=['#3b82f6'])
-            fig_evo.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=30, b=0),
-                                 yaxis_range=[0, 105], hovermode="x unified")
-            st.plotly_chart(fig_evo, use_container_width=True)
-
-        with tab_area:
-            # Gráfico de Barras Moderno
+        with c1:
+            # Evolução com cor Slate Blue Profissional
+            df_evo = df.groupby(df['data'].dt.date)['percentual'].mean().reset_index()
+            fig_line = px.line(df_evo, x='data', y='percentual', title="Evolução de Aproveitamento (%)",
+                              markers=True, line_shape="spline",
+                              color_discrete_sequence=["#6366f1"])
+            fig_line.update_layout(yaxis_range=[0,105], template="plotly_white")
+            st.plotly_chart(fig_line, use_container_width=True)
+            
+        with c2:
+            # Barras com Cores Qualitativas Fortes (High Contrast)
             df_area = df.groupby('area')[['acertos', 'total']].sum().reset_index()
             df_area['%'] = (df_area['acertos'] / df_area['total'] * 100).round(1)
             
-            fig_area = px.bar(df_area, x='area', y='%', 
-                             text='%', color='%',
-                             color_continuous_scale="Blues",
-                             title="Aproveitamento por Área Médica")
-            fig_area.update_layout(template="plotly_white", showlegend=False,
-                                  yaxis_range=[0, 105], coloraxis_showscale=False)
-            st.plotly_chart(fig_area, use_container_width=True)
+            # Cores: Azul, Esmeralda, Laranja, Roxo, Vermelho
+            fig_bar = px.bar(df_area, x='area', y='%', color='area',
+                            title="Aproveitamento por Área Médica",
+                            color_discrete_sequence=px.colors.qualitative.Bold,
+                            text_auto=True)
+            fig_bar.update_layout(yaxis_range=[0,105], showlegend=False, template="plotly_white")
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        # 4. TABELA DE REGISTROS RECENTES
-        with st.expander("📝 Ver Histórico Detalhado"):
-            st.dataframe(df[['data_estudo', 'assunto_nome', 'area_manual', 'acertos', 'total', 'percentual']].sort_values('data_estudo', ascending=False), 
-                        use_container_width=True, hide_index=True)
+        # 3. MÉTRICAS KPI
+        st.subheader("📊 Totais Acumulados")
+        m1, m2, m3 = st.columns(3)
+        total_q = df['total'].sum()
+        total_a = df['acertos'].sum()
+        m1.metric("Questões Respondidas", int(total_q))
+        m2.metric("Acertos Totais", int(total_a))
+        m3.metric("Média Geral", f"{(total_a/total_q*100):.1f}%")

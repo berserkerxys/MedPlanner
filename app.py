@@ -4,130 +4,136 @@ import time
 from datetime import datetime
 from database import (
     verificar_login, criar_usuario, registrar_estudo, 
-    registrar_simulado, get_progresso_hoje, get_lista_assuntos_nativa,
-    update_perfil_nome
+    registrar_simulado, get_lista_assuntos_nativa
 )
 
 st.set_page_config(page_title="MedPlanner Pro", page_icon="🩺", layout="wide")
 
-# Custom CSS para navegação e UI moderna
+# CSS Profissional
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {display: none;}
-    .stButton button { border-radius: 8px; }
-    .nav-card { background: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
-    .pomodoro-container { text-align: center; background: #fee2e2; padding: 20px; border-radius: 15px; border: 2px solid #ef4444; }
+    .stProgress > div > div > div > div { background-color: #3b82f6; }
+    .pomodoro-box { 
+        background-color: #fef2f2; 
+        border: 1px solid #fee2e2; 
+        padding: 15px; 
+        border-radius: 12px; 
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    .main-title { font-weight: 800; color: #1e293b; }
 </style>
 """, unsafe_allow_html=True)
 
-# Estados Globais
 if 'logado' not in st.session_state: st.session_state.logado = False
 if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
-if 'pomodoro_active' not in st.session_state: st.session_state.pomodoro_active = False
 
 def tela_login():
-    c1, c2, c3 = st.columns([1, 1.5, 1])
+    c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
-        st.markdown("<h1 style='text-align: center;'>🩺 MedPlanner Pro</h1>", unsafe_allow_html=True)
-        tab_log, tab_reg = st.tabs(["Acesso", "Novo Cadastro"])
-        with tab_log:
+        st.markdown("<h1 style='text-align:center;'>🩺 MedPlanner</h1>", unsafe_allow_html=True)
+        t1, t2 = st.tabs(["Acesso", "Cadastro"])
+        with t1:
             with st.form("login"):
-                u = st.text_input("Usuário", key="u_login")
-                p = st.text_input("Senha", type="password", key="p_login")
+                u = st.text_input("Usuário")
+                p = st.text_input("Senha", type="password")
                 if st.form_submit_button("Entrar", type="primary", use_container_width=True):
                     ok, res = verificar_login(u, p)
                     if ok:
-                        st.session_state.logado = True
-                        st.session_state.username = u
-                        st.session_state.u_nome = res
+                        st.session_state.logado, st.session_state.username, st.session_state.u_nome = True, u, res
                         st.rerun()
                     else: st.error(res)
-        with tab_reg:
-            with st.form("registro"):
-                nu = st.text_input("ID Usuário"); nn = st.text_input("Seu Nome"); np = st.text_input("Senha", type="password")
-                if st.form_submit_button("Criar Conta Gratuitamente", use_container_width=True):
+        with t2:
+            with st.form("reg"):
+                nu, nn, np = st.text_input("ID"), st.text_input("Nome"), st.text_input("Senha", type="password")
+                if st.form_submit_button("Criar Conta", use_container_width=True):
                     ok, m = criar_usuario(nu, np, nn)
                     st.success(m) if ok else st.error(m)
 
 def app_principal():
     u = st.session_state.username
-    nonce = st.session_state.data_nonce
+    
+    # 1. HEADER & POMODORO (TOPO)
+    st.markdown(f"<h2 class='main-title'>Bem-vindo, Dr. {st.session_state.u_nome}</h2>", unsafe_allow_html=True)
+    
+    with st.expander("⏲️ Ferramenta Pomodoro (Foco)", expanded=False):
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.markdown("<div class='pomodoro-box'>", unsafe_allow_html=True)
+            mode = st.radio("Modo:", ["Estudo (25m)", "Pausa (5m)"], horizontal=True, label_visibility="collapsed")
+            placeholder = st.empty()
+            btn_col = st.columns([1, 1])
+            start = btn_col[0].button("Iniciar")
+            stop = btn_col[1].button("Resetar")
+            
+            if start:
+                secs = 25*60 if "Estudo" in mode else 5*60
+                while secs > 0:
+                    mm, ss = divmod(secs, 60)
+                    placeholder.markdown(f"### ⏳ {mm:02d}:{ss:02d}")
+                    time.sleep(1)
+                    secs -= 1
+                st.balloons()
+            else:
+                placeholder.markdown(f"### ⏳ {'25:00' if 'Estudo' in mode else '05:00'}")
+            st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- BARRA LATERAL (SIDEBAR) MELHORADA ---
+    # 2. SIDEBAR NAVIGATION
     with st.sidebar:
-        st.markdown(f"### 🩺 {st.session_state.u_nome}")
-        st.caption(f"ID: {u}")
-        q_hoje = get_progresso_hoje(u, nonce)
-        st.metric("Questões Hoje", q_hoje, delta=f"{q_hoje-20 if q_hoje > 20 else 0} meta")
-        
+        st.markdown("### 🧭 Navegação")
+        menu = st.radio("Ir para:", ["📊 Performance", "📅 Minha Agenda", "📚 Videoteca", "👤 Perfil"], label_visibility="collapsed")
         st.divider()
-        menu = st.radio("Navegação", 
-            ["📊 Dashboard", "📅 Agenda SRS", "📚 Videoteca", "⏲️ Pomodoro", "👤 Meu Perfil"],
-            label_visibility="collapsed")
+        st.markdown("### 📝 Registrar")
+        tipo = st.selectbox("O que estudou?", ["Aula por Tema", "Simulado Completo", "Banco de Questões"])
         
+        if tipo == "Aula por Tema":
+            t = st.selectbox("Assunto:", get_lista_assuntos_nativa())
+            acc = st.number_input("Acertos", 0, 100, 8)
+            tot = st.number_input("Total", 1, 100, 10)
+            if st.button("Salvar Estudo", use_container_width=True, type="primary"):
+                st.toast(registrar_estudo(u, t, acc, tot))
+        
+        elif tipo == "Simulado Completo":
+            st.caption("20q por área padrão")
+            areas = ["Cirurgia", "Clínica Médica", "G.O.", "Pediatria", "Preventiva"]
+            res_sim = {}
+            for a in areas:
+                res_sim[a] = {"total": 20, "acertos": st.number_input(f"Acertos {a}", 0, 20, 15)}
+            if st.button("Salvar Simulado", use_container_width=True, type="primary"):
+                st.toast(registrar_simulado(u, res_sim))
+
         st.divider()
-        if st.button("🚪 Sair", use_container_width=True):
+        if st.button("Sair"):
             st.session_state.logado = False
             st.rerun()
 
-    # --- ROTEAMENTO DE PÁGINAS ---
-    if menu == "📊 Dashboard":
+    # 3. CONTEÚDO
+    if menu == "📊 Performance":
         from dashboard import render_dashboard
         render_dashboard(None)
-    
-    elif menu == "📅 Agenda SRS":
+    elif menu == "📅 Minha Agenda":
         from agenda import render_agenda
         render_agenda(None)
-        
     elif menu == "📚 Videoteca":
         from videoteca import render_videoteca
         render_videoteca(None)
-
-    elif menu == "⏲️ Pomodoro":
-        render_pomodoro()
-
-    elif menu == "👤 Meu Perfil":
+    elif menu == "👤 Perfil":
         render_perfil()
 
-def render_pomodoro():
-    st.header("⏲️ Contador Pomodoro")
-    st.info("O método Pomodoro ajuda a manter o foco total por 25 minutos com pausas curtas.")
-    
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        container = st.container(border=True)
-        placeholder = container.empty()
-        
-        type_p = st.radio("Ciclo:", ["Estudo (25min)", "Pausa Curta (5min)"], horizontal=True)
-        duration = 25 * 60 if "Estudo" in type_p else 5 * 60
-        
-        if st.button("🚀 Iniciar Cronômetro", use_container_width=True):
-            for t in range(duration, -1, -1):
-                mins, secs = divmod(t, 60)
-                placeholder.markdown(f"<h1 style='text-align: center; font-size: 80px;'>{mins:02d}:{secs:02d}</h1>", unsafe_allow_html=True)
-                time.sleep(1)
-            st.balloons()
-            st.success("Ciclo concluído! Hora de uma pausa ou voltar aos estudos.")
-
 def render_perfil():
-    st.header("👤 Perfil do Aluno")
-    u = st.session_state.username
-    
-    with st.container(border=True):
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            st.markdown("<div style='font-size: 100px;'>👨‍⚕️</div>", unsafe_allow_html=True)
-        with col2:
+    st.header("👤 Perfil do Usuário")
+    from database import get_status_gamer
+    status, _ = get_status_gamer(st.session_state.username, st.session_state.data_nonce)
+    if status:
+        c1, c2 = st.columns([1, 3])
+        with c1: st.image("https://cdn-icons-png.flaticon.com/512/3774/3774299.png", width=150)
+        with c2:
             st.subheader(st.session_state.u_nome)
-            st.write(f"**Nome de Usuário:** {u}")
-            
-            with st.expander("Editar Dados"):
-                novo_n = st.text_input("Mudar Nome Exibido", value=st.session_state.u_nome)
-                if st.button("Atualizar Perfil"):
-                    if update_perfil_nome(u, novo_n):
-                        st.session_state.u_nome = novo_n
-                        st.success("Nome atualizado!")
-                        st.rerun()
+            st.write(f"**Título:** {status['titulo']}")
+            st.write(f"**Nível:** {status['nivel']}")
+            st.write(f"**XP Total:** {status['xp_total']} pontos")
+            st.progress(status['xp_atual']/1000, text="Progresso do Nível")
 
 if st.session_state.logado: app_principal()
 else: tela_login()
