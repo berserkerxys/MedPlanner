@@ -3,9 +3,9 @@ import pandas as pd
 import time
 from datetime import datetime
 from sidebar_v2 import render_sidebar
-from database import get_resumo, salvar_resumo
+from database import verificar_login, criar_usuario
 
-st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
+st.set_page_config(page_title="MedPlanner Pro", page_icon="🩺", layout="wide")
 
 st.markdown("""
 <style>
@@ -20,71 +20,44 @@ if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
 def app_principal():
     u = st.session_state.username
-    render_sidebar()
+    menu = render_sidebar()
     
-    st.markdown("<h1 class='main-title'>🩺 MEDPLANNER ELITE</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>🩺 MEDPLANNER PRO</h1>", unsafe_allow_html=True)
     
-    with st.expander("⏲️ Ferramenta Pomodoro", expanded=False):
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c2:
-            mode = st.radio("Ciclo:", ["Estudo (25m)", "Pausa (5m)"], horizontal=True, label_visibility="collapsed")
-            placeholder = st.empty()
-            if st.button("🚀 Iniciar Ciclo", use_container_width=True):
-                secs = 25*60 if "Estudo" in mode else 5*60
-                while secs > 0:
-                    mm, ss = divmod(secs, 60)
-                    placeholder.markdown(f"<h2 style='text-align:center;'>⏳ {mm:02d}:{ss:02d}</h2>", unsafe_allow_html=True)
-                    time.sleep(1); secs -= 1
-                st.balloons()
-            else: placeholder.markdown(f"<h2 style='text-align:center;'>⏳ {'25:00' if 'Estudo' in mode else '05:00'}</h2>", unsafe_allow_html=True)
-
-    # TOP NAV
-    tab_perf, tab_agen, tab_vide, tab_resu, tab_perf_u = st.tabs([
-        "📊 PERFORMANCE", "📅 AGENDA SRS", "📚 VIDEOTECA", "📝 MEUS RESUMOS", "👤 PERFIL"
-    ])
-    
-    with tab_perf:
+    # Navegação baseada na Sidebar
+    if menu == "📊 Performance":
         from dashboard import render_dashboard
         render_dashboard(None)
-    with tab_agen:
+    elif menu == "📅 Agenda SRS":
         from agenda import render_agenda
         render_agenda(None)
-    with tab_vide:
+    elif menu == "📚 Videoteca":
         from videoteca import render_videoteca
         render_videoteca(None)
-    with tab_resu:
+    elif menu == "📝 Resumos":
         render_resumos_ui(u)
-    with tab_perf_u:
+    elif menu == "👤 Perfil":
         render_perfil_aluno()
 
 def render_resumos_ui(u):
-    st.header("📝 Meus Resumos Estruturados")
-    areas = ["Cirurgia", "Clínica Médica", "Ginecologia e Obstetrícia", "Pediatria", "Preventiva"]
+    from database import get_resumo, salvar_resumo
+    st.header("📝 Meus Resumos")
+    areas = ["Cirurgia", "Clínica Médica", "G.O.", "Pediatria", "Preventiva"]
     for area in areas:
-        with st.expander(f"📚 {area.upper()}", expanded=False):
-            txt_db = get_resumo(u, area)
-            texto = st.text_area("Notas:", value=txt_db, height=300, key=f"txt_{area}")
-            if st.button(f"➕ Guardar Notas de {area}", key=f"save_{area}", type="primary", use_container_width=True):
-                if salvar_resumo(u, area, texto):
-                    st.toast(f"Notas de {area} guardadas!")
-                else: st.error("Erro.")
+        with st.expander(f"📚 {area}", expanded=False):
+            txt = st.text_area(f"Notas de {area}:", value=get_resumo(u, area), height=300, key=f"t_{area}")
+            if st.button(f"Guardar {area}", key=f"s_{area}"):
+                if salvar_resumo(u, area, txt): st.toast("Salvo!")
 
 def render_perfil_aluno():
     from database import get_status_gamer
     status, _ = get_status_gamer(st.session_state.username, st.session_state.data_nonce)
+    st.header("👤 Perfil")
     if status:
-        c1, c2 = st.columns([1, 2])
-        c1.markdown("<h1 style='font-size: 150px; text-align: center;'>👨‍⚕️</h1>", unsafe_allow_html=True)
-        with c2:
-            st.subheader(st.session_state.u_nome)
-            st.markdown(f"**Título:** {status['titulo']}")
-            st.markdown(f"**Nível:** {status['nivel']}")
-            st.markdown(f"**Meta Diária:** {status['meta_diaria']} q/dia")
-            st.markdown(f"**XP Total:** {status['xp_total']} pts")
+        st.write(f"**Nível:** {status['nivel']} - {status['titulo']}")
+        st.progress(status['xp_atual']/1000)
 
-# LOGIN
 def tela_login():
-    from database import verificar_login, criar_usuario
     c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
         st.markdown("<h1 style='text-align:center;'>🩺 MedPlanner</h1>", unsafe_allow_html=True)
@@ -95,15 +68,17 @@ def tela_login():
                 if st.form_submit_button("Aceder", type="primary", use_container_width=True):
                     ok, res = verificar_login(u, p)
                     if ok:
-                        st.session_state.logado, st.session_state.username, st.session_state.u_nome = True, u, res
+                        st.session_state.logado = True; st.session_state.username = u; st.session_state.u_nome = res
                         st.rerun()
                     else: st.error("Inválido.")
         with t2:
             with st.form("reg"):
-                nu, nn, np = st.text_input("ID"), st.text_input("Nome"), st.text_input("Senha", type="password")
-                if st.form_submit_button("Cadastrar", use_container_width=True):
+                nu = st.text_input("ID"); nn = st.text_input("Nome"); np = st.text_input("Senha", type="password")
+                if st.form_submit_button("Cadastrar"):
                     ok, m = criar_usuario(nu, np, nn)
                     st.success(m) if ok else st.error(m)
 
-if st.session_state.logado: app_principal()
-else: tela_login()
+if st.session_state.logado:
+    app_principal()
+else:
+    tela_login()
