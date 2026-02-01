@@ -4,14 +4,14 @@ import time
 from datetime import datetime
 from sidebar_v2 import render_sidebar
 
-st.set_page_config(page_title="MedPlanner Pro", page_icon="🩺", layout="wide")
+st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
 
-# CSS para estabilidade e Pomodoro
+# CSS Elite
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {display: none;}
     .main-title { font-weight: 800; color: #1e293b; margin-bottom: 0px; }
-    .pomodoro-box { background: #fdf2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 1rem; text-align: center; margin-bottom: 2rem;}
+    .pomodoro-box { background: #fdf2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 1.5rem; text-align: center; margin-bottom: 2rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -23,7 +23,7 @@ def tela_login():
     c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
         st.markdown("<h1 style='text-align:center;'>🩺 MedPlanner</h1>", unsafe_allow_html=True)
-        t1, t2 = st.tabs(["Acesso", "Novo Registro"])
+        t1, t2 = st.tabs(["Acesso", "Cadastro"])
         with t1:
             with st.form("login_f"):
                 u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
@@ -32,7 +32,7 @@ def tela_login():
                     if ok:
                         st.session_state.logado, st.session_state.username, st.session_state.u_nome = True, u, res
                         st.rerun()
-                    else: st.error(res)
+                    else: st.error("Login inválido.")
         with t2:
             with st.form("reg_f"):
                 nu, nn, np = st.text_input("ID"), st.text_input("Nome"), st.text_input("Senha", type="password")
@@ -44,16 +44,16 @@ def app_principal():
     # 1. SIDEBAR (CONTROLE)
     menu = render_sidebar()
     
-    # 2. TOPO E POMODORO (FIXO)
+    # 2. TOPO E POMODORO
     st.markdown(f"<h2 class='main-title'>Bem-vindo, Dr. {st.session_state.u_nome}</h2>", unsafe_allow_html=True)
     
-    with st.expander("⏲️ Contador Pomodoro (Foco total)", expanded=False):
+    with st.expander("⏲️ Ferramenta Pomodoro", expanded=False):
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             st.markdown("<div class='pomodoro-box'>", unsafe_allow_html=True)
-            mode = st.radio("Sessão:", ["Estudo (25m)", "Pausa (5m)"], horizontal=True, label_visibility="collapsed")
+            mode = st.radio("Ciclo:", ["Estudo (25m)", "Pausa (5m)"], horizontal=True, label_visibility="collapsed")
             placeholder = st.empty()
-            if st.button("🚀 Iniciar Cronômetro", use_container_width=True):
+            if st.button("🚀 Iniciar Timer", use_container_width=True):
                 secs = 25*60 if "Estudo" in mode else 5*60
                 while secs > 0:
                     mm, ss = divmod(secs, 60)
@@ -64,7 +64,7 @@ def app_principal():
             else: placeholder.markdown(f"## ⏳ {'25:00' if 'Estudo' in mode else '05:00'}")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 3. CONTEÚDO DINÂMICO
+    # 3. ROTEAMENTO
     if menu == "📊 Performance":
         from dashboard import render_dashboard
         render_dashboard(None)
@@ -74,13 +74,13 @@ def app_principal():
     elif menu == "📚 Videoteca":
         from videoteca import render_videoteca
         render_videoteca(None)
-    elif menu == "👤 Meu Perfil":
+    elif menu == "👤 Perfil":
         render_perfil()
 
 def render_perfil():
     from database import get_status_gamer
     status, _ = get_status_gamer(st.session_state.username, st.session_state.data_nonce)
-    st.header("👤 Perfil do Aluno")
+    st.header("👤 Perfil Profissional")
     if status:
         c1, c2 = st.columns([1, 2])
         c1.markdown("<h1 style='font-size: 100px; text-align: center;'>👨‍⚕️</h1>", unsafe_allow_html=True)
@@ -89,8 +89,9 @@ def render_perfil():
                 st.subheader(st.session_state.u_nome)
                 st.markdown(f"**Título:** {status['titulo']}")
                 st.markdown(f"**Nível:** {status['nivel']}")
+                st.markdown(f"**Meta Atual:** {status['meta_diaria']} q/dia")
                 st.markdown(f"**XP Total:** {status['xp_total']} pts")
-                st.progress(status['xp_atual']/1000, text="Progresso para próximo nível")
+                st.progress(status['xp_atual']/1000, text=f"{status['xp_atual']} / 1000")
 
 if st.session_state.logado: app_principal()
 else: tela_login()

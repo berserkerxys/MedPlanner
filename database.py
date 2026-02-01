@@ -16,7 +16,7 @@ def get_supabase() -> Client:
     except Exception: return None
 
 # ==========================================
-# 📚 VIDEOTECA (MEMÓRIA PERMANENTE)
+# 📚 VIDEOTECA E MAPEAMENTO
 # ==========================================
 @st.cache_data(ttl=None)
 def listar_conteudo_videoteca():
@@ -38,23 +38,13 @@ def get_area_por_assunto(assunto):
 @st.cache_data(ttl=None)
 def get_lista_assuntos_nativa():
     df = listar_conteudo_videoteca()
-    return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Geral"]
+    return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Banco Geral"]
 
 # ==========================================
-# 📊 ANALYTICS E MISSÕES (Sincronização Real)
+# 📊 GAMIFICAÇÃO E STATUS (META DINÂMICA)
 # ==========================================
 def trigger_refresh():
     if 'data_nonce' in st.session_state: st.session_state.data_nonce += 1
-
-@st.cache_data(ttl=300)
-def get_progresso_hoje(u, nonce):
-    client = get_supabase()
-    if not client: return 0
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    try:
-        res = client.table("historico").select("total").eq("usuario_id", u).eq("data_estudo", hoje).execute()
-        return sum([int(i['total']) for i in res.data])
-    except: return 0
 
 @st.cache_data(ttl=300)
 def get_status_gamer(u, nonce):
@@ -64,20 +54,91 @@ def get_status_gamer(u, nonce):
         if not res.data: return None, pd.DataFrame()
         d = res.data[0]
         xp = int(d['xp'])
-        status = {'nivel': 1 + (xp // 1000), 'xp_atual': xp % 1000, 'xp_total': xp, 'titulo': d['titulo'], 'xp_proximo': 1000}
+        meta_diaria = int(d.get('meta_diaria', 50))
         
+        status = {
+            'nivel': 1 + (xp // 1000), 
+            'xp_atual': xp % 1000, 
+            'xp_total': xp, 
+            'titulo': d['titulo'], 
+            'meta_diaria': meta_diaria,
+            'xp_proximo': 1000
+        }
+        
+        # Cálculo das Missões do Dia
         hoje = datetime.now().strftime("%Y-%m-%d")
         h = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
         q = sum([int(i['total']) for i in h.data]) if h.data else 0
         a = sum([int(i['acertos']) for i in h.data]) if h.data else 0
         
         missoes = [
-            {"Icon": "🎯", "Meta": "Meta Diária", "Prog": q, "Objetivo": 50, "Unid": "q"},
-            {"Icon": "✅", "Meta": "Acertos Meta", "Prog": a, "Objetivo": 35, "Unid": "hits"},
-            {"Icon": "🔥", "Meta": "Bônus XP", "Prog": q * 2, "Objetivo": 100, "Unid": "xp"}
+            {"Icon": "🎯", "Meta": "Objetivo Diário", "Prog": q, "Objetivo": meta_diaria, "Unid": "q"},
+            {"Icon": "✅", "Meta": "Acertos (Meta 70%)", "Prog": a, "Objetivo": int(meta_diaria * 0.7), "Unid": "hits"},
+            {"Icon": "🔥", "Meta": "XP Diário", "Prog": q * 2, "Objetivo": meta_diaria * 2, "Unid": "xp"}
         ]
         return status, pd.DataFrame(missoes)
     except: return None, pd.DataFrame()
+
+def update_meta_diaria(u, nova_meta):
+    client = get_supabase()
+    try:
+        client.table("perfil_gamer").update({"meta_diaria": int(nova_meta)}).eq("usuario_id", u).execute()
+        trigger_refresh()
+        return True
+    except: return False
+
+# ==========================================
+# 📝 REGISTOS (FIXO: ACERTOS VS TOTAL)
+# ==========================================
+def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
+    client = get_supabase()
+    dt = data_p if data_p else datetime.now().date()
+    area = area_f if area_f else get_area_por_assunto(assunto)
+    try:
+        client.table("historico").insert({
+            "usuario_id": u, "assunto_nome": assunto, "area_manual": area, 
+            "data_estudo": dt.strftime("%Y-%m-%d"), "acertos": int(acertos), "total": int(total)
+        }).execute()
+        
+        if srs and "Banco" not in assunto and "Simulado" not in assunto:
+            dt_rev = (dt + timedelta(days=7)).strftime("%Y-%m-%d")
+            client.table("revisoes").insert({
+                "usuario_id": u, "assunto_nome": assunto, "grande_area": area, 
+                "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"
+            }).execute()
+        
+        update_xp(u, int(total) * 2)
+        trigger_refresh()
+        return "✅ Registado!"
+    except: return "Erro ao salvar"
+
+def registrar_simulado(u, dados, data_p=None):
+    client = get_supabase()
+    dt = data_p.strftime("%Y-%m-%d") if data_p else datetime.now().strftime("%Y-%m-%d")
+    inserts = []
+    tq = 0
+    for area, v in dados.items():
+        if int(v['total']) > 0:
+            tq += int(v['total'])
+            inserts.append({
+                "usuario_id": u, "assunto_nome": f"Simulado - {area}", 
+                "area_manual": area, "data_estudo": dt, "acertos": int(v['acertos']), "total": int(v['total'])
+            })
+    try:
+        if inserts: client.table("historico").insert(inserts).execute()
+        update_xp(u, int(tq * 2.5))
+        trigger_refresh()
+        return f"✅ Simulado salvo ({tq}q)!"
+    except: return "Erro"
+
+def update_xp(u, qtd):
+    client = get_supabase()
+    try:
+        res = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
+        if res.data:
+            nxp = int(res.data[0]['xp']) + int(qtd)
+            client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
+    except: pass
 
 @st.cache_data(ttl=300)
 def get_dados_graficos(u, nonce):
@@ -95,51 +156,7 @@ def get_dados_graficos(u, nonce):
         return df.sort_values('data')
     except: return pd.DataFrame()
 
-# ==========================================
-# 📝 REGISTROS E SEGURANÇA
-# ==========================================
-def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
-    client = get_supabase()
-    dt = data_p if data_p else datetime.now().date()
-    area = area_f if area_f else get_area_por_assunto(assunto)
-    try:
-        client.table("historico").insert({
-            "usuario_id": u, "assunto_nome": assunto, "area_manual": area, 
-            "data_estudo": dt.strftime("%Y-%m-%d"), "acertos": int(acertos), "total": int(total)
-        }).execute()
-        if srs and "Banco" not in assunto and "Simulado" not in assunto:
-            dt_rev = (dt + timedelta(days=7)).strftime("%Y-%m-%d")
-            client.table("revisoes").insert({"usuario_id": u, "assunto_nome": assunto, "grande_area": area, "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"}).execute()
-        update_xp(u, int(total) * 2)
-        trigger_refresh()
-        return "✅ Estudo Salvo!"
-    except: return "Erro"
-
-def registrar_simulado(u, dados, data_p=None):
-    client = get_supabase()
-    dt = data_p.strftime("%Y-%m-%d") if data_p else datetime.now().strftime("%Y-%m-%d")
-    inserts = []
-    tq = 0
-    for area, v in dados.items():
-        if int(v['total']) > 0:
-            tq += int(v['total'])
-            inserts.append({"usuario_id": u, "assunto_nome": f"Simulado - {area}", "area_manual": area, "data_estudo": dt, "acertos": int(v['acertos']), "total": int(v['total'])})
-    try:
-        if inserts: client.table("historico").insert(inserts).execute()
-        update_xp(u, int(tq * 2.5))
-        trigger_refresh()
-        return f"✅ Simulado salvo ({tq}q)!"
-    except: return "Erro"
-
-def update_xp(u, qtd):
-    client = get_supabase()
-    try:
-        res = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
-        if res.data:
-            nxp = int(res.data[0]['xp']) + int(qtd)
-            client.table("perfil_gamer").update({"xp": nxp, "nivel": 1 + (nxp // 1000)}).eq("usuario_id", u).execute()
-    except: pass
-
+# --- AUTH ---
 def verificar_login(u, p):
     client = get_supabase()
     try:
@@ -147,24 +164,17 @@ def verificar_login(u, p):
         if res.data:
             if bcrypt.checkpw(p.encode('utf-8'), res.data[0]['password_hash'].encode('utf-8')):
                 return True, res.data[0]['nome']
-        return False, "Credenciais inválidas"
-    except: return False, "Erro de servidor"
+        return False, "Login falhou"
+    except: return False, "Erro conexão"
 
 def criar_usuario(u, p, n):
     client = get_supabase()
     try:
         h = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         client.table("usuarios").insert({"username": u, "nome": n, "password_hash": h}).execute()
-        client.table("perfil_gamer").insert({"usuario_id": u, "xp": 0, "titulo": "Aspirante"}).execute()
-        return True, "Criado com sucesso!"
-    except: return False, "Utilizador existente"
-
-# --- COMPATIBILIDADE ---
-def get_db(): return True
-def pesquisar_global(termo):
-    df = listar_conteudo_videoteca()
-    if df.empty: return df
-    return df[df['titulo'].str.contains(termo, case=False, na=False) | df['assunto'].str.contains(termo, case=False, na=False)]
+        client.table("perfil_gamer").insert({"usuario_id": u, "xp": 0, "titulo": "Interno", "meta_diaria": 50}).execute()
+        return True, "Conta criada!"
+    except: return False, "Utilizador existe"
 
 def listar_revisoes_completas(u, n):
     client = get_supabase()
@@ -180,12 +190,5 @@ def concluir_revisao(rid, ac, tot):
         rev = res.data[0]
         client.table("revisoes").update({"status": "Concluido"}).eq("id", rid).execute()
         registrar_estudo(rev['usuario_id'], rev['assunto_nome'], ac, tot, area_f=rev.get('grande_area'), srs=False)
-        
-        saltos = {"1 Semana": (30, "1 Mês"), "1 Mês": (60, "2 Meses")}
-        d, prox = saltos.get(rev['tipo'], (None, None))
-        if prox:
-            dt_p = (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
-            client.table("revisoes").insert({"usuario_id": rev['usuario_id'], "assunto_nome": rev['assunto_nome'], "grande_area": rev.get('grande_area'), "data_agendada": dt_p, "tipo": prox, "status": "Pendente"}).execute()
-        trigger_refresh()
-        return "✅ Feito!"
+        return "✅ OK"
     except: return "Erro"
