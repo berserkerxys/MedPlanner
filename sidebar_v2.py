@@ -77,6 +77,7 @@ def render_sidebar():
                 for a in areas:
                     st.markdown(f"**{a}**")
                     c1, c2 = st.columns(2)
+                    # Agora permite definir o total por área conforme solicitado
                     a_tot = c1.number_input(f"Qtd {a}", 1, 100, 20, key=f"tot_{a}")
                     a_acc = c2.number_input(f"Ac {a}", 0, a_tot, 15, key=f"acc_{a}")
                     res_sim[a] = {"total": a_tot, "acertos": a_acc}
@@ -89,7 +90,7 @@ def render_sidebar():
             c1, c2 = st.columns(2)
             bg_acc = c1.number_input("Acertos", 0, 1000, 35)
             bg_tot = c2.number_input("Total", 1, 1000, 50)
-            if st.button("💾 Salvar Banco", use_container_width=True, type="primary"):
+            if st.button("💾 Salvar Banco Geral", use_container_width=True, type="primary"):
                 st.toast(registrar_estudo(u, "Banco Geral - Livre", bg_acc, bg_tot))
 
         st.divider()
