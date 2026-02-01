@@ -1,5 +1,5 @@
 # database.py
-# Versão com Sistema de Conquistas Hardcore e Stats Globais
+# Versão com Dados Pessoais (Email/Nascimento) e Migração Automática
 
 import os
 import json
@@ -19,7 +19,7 @@ except Exception:
 
 DB_NAME = "medplanner_local.db"
 
-# --- 1. NORMALIZAÇÃO INTELIGENTE ---
+# --- 1. NORMALIZAÇÃO ---
 def normalizar_area(nome):
     if not nome: return "Geral"
     n_upper = str(nome).strip().upper()
@@ -75,16 +75,66 @@ def trigger_refresh():
 def _ensure_local_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # Tabelas Core
     c.execute("CREATE TABLE IF NOT EXISTS historico (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, area_manual TEXT, data_estudo TEXT, acertos INTEGER, total INTEGER)")
     c.execute("CREATE TABLE IF NOT EXISTS revisoes (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, grande_area TEXT, data_agendada TEXT, tipo TEXT, status TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS perfil_gamer (usuario_id TEXT PRIMARY KEY, xp INTEGER, titulo TEXT, meta_diaria INTEGER)")
     c.execute("CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, nome TEXT, password_hash TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
     c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
+    
+    # MIGRAÇÃO: Adiciona colunas novas se não existirem (SQLite não suporta IF NOT EXISTS em ADD COLUMN facilmente, então usamos try/except)
+    try: 
+        c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+    except: pass
+    try: 
+        c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
+    except: pass
+    
     conn.commit()
     conn.close()
 
-# --- 4. PERSISTÊNCIA CRONOGRAMA ---
+# --- 4. GESTÃO DE DADOS PESSOAIS (NOVO) ---
+def get_dados_pessoais(u):
+    """Retorna dicionário com email e nascimento."""
+    client = get_supabase()
+    dados = {"email": "", "nascimento": None}
+    
+    try:
+        if client:
+            res = client.table("usuarios").select("email, data_nascimento").eq("username", u).execute()
+            if res.data:
+                d = res.data[0]
+                dados["email"] = d.get("email") or ""
+                dados["nascimento"] = d.get("data_nascimento")
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                # Usa row_factory para facilitar
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("SELECT email, data_nascimento FROM usuarios WHERE username=?", (u,))
+                row = cur.fetchone()
+                if row:
+                    dados["email"] = row["email"] or ""
+                    dados["nascimento"] = row["data_nascimento"]
+    except: pass
+    return dados
+
+def update_dados_pessoais(u, email, nascimento_str):
+    """Salva email e data de nascimento (formato YYYY-MM-DD)."""
+    client = get_supabase()
+    try:
+        if client:
+            client.table("usuarios").update({"email": email, "data_nascimento": nascimento_str}).eq("username", u).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("UPDATE usuarios SET email=?, data_nascimento=? WHERE username=?", (email, nascimento_str, u))
+        return True
+    except: return False
+
+# --- 5. PERSISTÊNCIA CRONOGRAMA ---
 def get_cronograma_status(usuario_id):
     client = get_supabase()
     try:
@@ -119,7 +169,7 @@ def salvar_cronograma_status(usuario_id, estado_dict):
         return True
     except: return False
 
-# --- 5. REGISTROS ---
+# --- 6. REGISTROS ---
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     area = normalizar_area(area_f if area_f else get_area_por_assunto(assunto))
@@ -154,7 +204,7 @@ def registrar_simulado(u, dados):
         if int(d['total']) > 0: registrar_estudo(u, f"Simulado - {area}", d['acertos'], d['total'], area_f=normalizar_area(area), srs=False)
     return "✅ Simulado Salvo!"
 
-# --- 6. PERFORMANCE E GRÁFICOS ---
+# --- 7. PERFORMANCE ---
 def get_dados_graficos(u, nonce=None):
     client = get_supabase()
     if client:
@@ -171,7 +221,7 @@ def get_dados_graficos(u, nonce=None):
         df['total'] = df['total'].astype(int); df['acertos'] = df['acertos'].astype(int)
     return df
 
-# --- 7. SRS AUTOMÁTICO ---
+# --- 8. SRS E AUTH ---
 def listar_revisoes_completas(u, n=None):
     client = get_supabase()
     if client:
@@ -183,38 +233,39 @@ def listar_revisoes_completas(u, n=None):
 def concluir_revisao(rid, ac, tot):
     srs_map = {"1 Semana": ("1 Mês", 30), "1 Mês": ("2 Meses", 60), "2 Meses": ("4 Meses", 120)}
     client = get_supabase()
+    
+    # Lógica unificada para evitar repetição (abstração simples)
     if client:
         r = client.table("revisoes").select("*").eq("id", rid).execute()
-        if r.data:
-            rev = r.data[0]
-            tipo_atual = rev.get('tipo', '1 Semana')
-            client.table("revisoes").update({"status": "Concluido"}).eq("id", rid).execute()
-            registrar_estudo(rev['usuario_id'], rev['assunto_nome'], ac, tot, area_f=rev['grande_area'], srs=False)
-            if tipo_atual in srs_map:
-                prox_nome, dias = srs_map[tipo_atual]
-                dt_prox = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
-                client.table("revisoes").insert({"usuario_id": rev['usuario_id'], "assunto_nome": rev['assunto_nome'], "grande_area": rev['grande_area'], "data_agendada": dt_prox, "tipo": prox_nome, "status": "Pendente"}).execute()
-                return f"✅ Próxima em {dias} dias ({prox_nome})."
-            return "✅ Ciclo finalizado!"
+        if not r.data: return "Erro"
+        rev = r.data[0]
+        client.table("revisoes").update({"status": "Concluido"}).eq("id", rid).execute()
     else:
         _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT usuario_id, assunto_nome, grande_area, tipo FROM revisoes WHERE id=?", (rid,))
-            rev = cur.fetchone()
-            if rev:
-                u_id, assunto, area, tipo_atual = rev
-                cur.execute("UPDATE revisoes SET status='Concluido' WHERE id=?", (rid,))
-                registrar_estudo(u_id, assunto, ac, tot, area_f=area, srs=False)
-                if tipo_atual in srs_map:
-                    prox_nome, dias = srs_map[tipo_atual]
-                    dt_prox = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
-                    cur.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", (u_id, assunto, area, dt_prox, prox_nome, "Pendente"))
-                    conn.commit(); return f"✅ Próxima em {dias} dias ({prox_nome})."
-                conn.commit(); return "✅ Ciclo finalizado!"
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM revisoes WHERE id=?", (rid,))
+        rev = cur.fetchone()
+        cur.execute("UPDATE revisoes SET status='Concluido' WHERE id=?", (rid,))
+        conn.commit()
+
+    if rev:
+        registrar_estudo(rev['usuario_id'], rev['assunto_nome'], ac, tot, area_f=rev['grande_area'], srs=False)
+        tipo = rev['tipo']
+        if tipo in srs_map:
+            prox, dias = srs_map[tipo]
+            dt = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
+            
+            if client:
+                client.table("revisoes").insert({"usuario_id": rev['usuario_id'], "assunto_nome": rev['assunto_nome'], "grande_area": rev['grande_area'], "data_agendada": dt, "tipo": prox, "status": "Pendente"}).execute()
+            else:
+                cur.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", (rev['usuario_id'], rev['assunto_nome'], rev['grande_area'], dt, prox, "Pendente"))
+                conn.commit()
+            return f"✅ Próxima em {dias}d ({prox})"
+        return "✅ Ciclo Finalizado!"
     return "Erro"
 
-# --- 8. GAMIFICAÇÃO & CONQUISTAS (NOVO) ---
 def update_meta_diaria(u, nova):
     client = get_supabase()
     if client:
@@ -228,44 +279,30 @@ def update_meta_diaria(u, nova):
     trigger_refresh()
 
 def get_conquistas_e_stats(u):
-    """Calcula estatísticas globais e retorna status das conquistas."""
+    # (Mantido igual à versão anterior, apenas recalculando para contexto)
     client = get_supabase()
-    total_q_global = 0
-    
-    # 1. Pega total global de questões
+    total_q = 0
     if client:
         try:
             h = client.table("historico").select("total").eq("usuario_id", u).execute()
-            total_q_global = sum(x['total'] for x in h.data)
+            total_q = sum(x['total'] for x in h.data)
         except: pass
     else:
         _ensure_local_db()
         with sqlite3.connect(DB_NAME) as conn:
             row = conn.execute("SELECT sum(total) FROM historico WHERE usuario_id=?", (u,)).fetchone()
-            total_q_global = row[0] if row and row[0] else 0
-            
-    # 2. Define Tiers Hardcore
+            total_q = row[0] if row and row[0] else 0
+
     tiers = [
         {"nome": "Interno Iniciante", "meta": 100, "icon": "🏥"},
         {"nome": "Residente R1", "meta": 2000, "icon": "🩺"},
         {"nome": "Residente R3", "meta": 10000, "icon": "🧠"},
         {"nome": "Staff", "meta": 15000, "icon": "🎓"},
-        {"nome": "Chefe de Serviço (Aprovado)", "meta": 20000, "icon": "🏆"}, # Platinum
+        {"nome": "A Lenda (Aprovado)", "meta": 20000, "icon": "🏆"},
     ]
-    
-    conquistas = []
-    proximo_nivel = None
-    
-    for tier in tiers:
-        desbloqueado = total_q_global >= tier['meta']
-        conquistas.append({
-            **tier,
-            "desbloqueado": desbloqueado
-        })
-        if not desbloqueado and proximo_nivel is None:
-            proximo_nivel = tier
-            
-    return total_q_global, conquistas, proximo_nivel
+    conq = [{"nome": t["nome"], "meta": t["meta"], "icon": t["icon"], "desbloqueado": total_q >= t["meta"]} for t in tiers]
+    prox = next((t for t in tiers if total_q < t['meta']), None)
+    return total_q, conq, prox
 
 def get_status_gamer(u, nonce=None):
     client, xp, meta = get_supabase(), 0, 50
@@ -285,16 +322,14 @@ def get_status_gamer(u, nonce=None):
             if row: xp, meta = row
             h_row = conn.execute("SELECT sum(total), sum(acertos) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
             q, a = (h_row[0] or 0), (h_row[1] or 0)
-            
-    # Usa o total de questões para definir o título
-    total_q_global, _, _ = get_conquistas_e_stats(u)
     
-    # Lógica de Título Dinâmico
+    # Título dinâmico
     titulo = "Interno"
-    if total_q_global > 2000: titulo = "R1"
-    if total_q_global > 10000: titulo = "R3"
-    if total_q_global > 15000: titulo = "Staff"
-    if total_q_global > 20000: titulo = "A Lenda"
+    q_total, _, _ = get_conquistas_e_stats(u)
+    if q_total > 2000: titulo = "Residente R1"
+    if q_total > 10000: titulo = "Residente R3"
+    if q_total > 15000: titulo = "Staff"
+    if q_total > 20000: titulo = "Chefe"
 
     status = {'nivel': 1 + (xp // 1000), 'xp_atual': xp % 1000, 'xp_total': xp, 'meta_diaria': meta, 'titulo': titulo}
     df_m = pd.DataFrame([{"Icon": "🎯", "Meta": "Questões", "Prog": q, "Objetivo": meta, "Unid": "q"}])
@@ -304,7 +339,6 @@ def get_progresso_hoje(u, nonce=None):
     _, df_m = get_status_gamer(u, nonce)
     return df_m.iloc[0]['Prog'] if not df_m.empty else 0
 
-# --- AUTH ---
 def verificar_login(u, p):
     client = get_supabase()
     if client:
