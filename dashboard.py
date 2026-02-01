@@ -19,22 +19,25 @@ def plot_pro(dataframe, col, chart_type='bar'):
 def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
-    df = get_dados_graficos(u, nonce) # cite: 12
+    df = get_dados_graficos(u, nonce)
 
     if not df.empty:
-        st.subheader("📈 Performance Médica")
+        st.subheader("📈 Análise de Performance")
         tabs = st.tabs(["📅 Diário", "🗓️ Semanal", "📊 Mensal"])
         
         with tabs[0]:
+            # Últimos 15 dias para não poluir a visualização
             df['dia'] = df['data'].dt.strftime('%d/%m')
-            st.plotly_chart(plot_pro(df.tail(30), 'dia', 'line'), use_container_width=True)
+            st.plotly_chart(plot_pro(df.tail(15), 'dia', 'line'), use_container_width=True)
             
         with tabs[1]:
+            # Agrupamento por semana
             df['semana'] = df['data'].dt.to_period('W').apply(lambda r: r.start_time.strftime('%d/%m'))
             st.plotly_chart(plot_pro(df, 'semana', 'bar'), use_container_width=True)
             
         with tabs[2]:
+            # Agrupamento por mês
             df['mes'] = df['data'].dt.strftime('%m/%Y')
             st.plotly_chart(plot_pro(df, 'mes', 'bar'), use_container_width=True)
     else:
-        st.info("Registre seus primeiros estudos para visualizar sua evolução!")
+        st.info("Registre seus primeiros temas na barra lateral para ver os gráficos!")
