@@ -5,4 +5,4 @@ seaborn
 telethon
 bcrypt
 plotly
-firebase-admin
+supabase
