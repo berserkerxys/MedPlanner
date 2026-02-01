@@ -6,3 +6,4 @@ telethon
 bcrypt
 plotly
 supabase
+google-generativeai
