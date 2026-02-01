@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 import bcrypt
 import streamlit as st
 from supabase import create_client, Client
-import os
 
 # --- CONEXÃO SUPABASE ---
 @st.cache_resource
@@ -17,46 +16,17 @@ def get_supabase() -> Client:
     except Exception: return None
 
 # ==========================================
-# 📚 VIDEOTECA NATIVA (LÊ DO ARQUIVO)
-# ==========================================
-@st.cache_data(ttl=None)
-def listar_conteudo_videoteca():
-    try:
-        from biblioteca_conteudo import VIDEOTECA_GLOBAL
-        return pd.DataFrame(VIDEOTECA_GLOBAL, columns=['grande_area', 'assunto', 'tipo', 'subtipo', 'titulo', 'link', 'id'])
-    except: return pd.DataFrame()
-
-@st.cache_data(ttl=None)
-def get_mapa_areas():
-    df = listar_conteudo_videoteca()
-    if df.empty: return {}
-    return df.set_index(df['assunto'].str.strip().str.lower())['grande_area'].to_dict()
-
-def get_area_por_assunto(assunto):
-    mapa = get_mapa_areas()
-    return mapa.get(str(assunto).strip().lower(), "Geral")
-
-@st.cache_data(ttl=None)
-def get_lista_assuntos_nativa():
-    df = listar_conteudo_videoteca()
-    return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Banco Geral"]
-
-def pesquisar_global(termo):
-    df = listar_conteudo_videoteca()
-    if df.empty: return df
-    mask = df['titulo'].str.contains(termo, case=False, na=False) | df['assunto'].str.contains(termo, case=False, na=False)
-    return df[mask]
-
-# ==========================================
-# 📊 GAMIFICAÇÃO E METAS
+# 🔄 UPDATE LIVE (CACHE BUSTER)
 # ==========================================
 def trigger_refresh():
     if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
     st.session_state.data_nonce += 1
 
+# ==========================================
+# 📊 GAMIFICAÇÃO & MISSÕES
+# ==========================================
 @st.cache_data(ttl=300)
 def get_progresso_hoje(u, nonce):
-    """Calcula questões feitas hoje. Resolve o ImportError."""
     client = get_supabase()
     if not client: return 0
     hoje = datetime.now().strftime("%Y-%m-%d")
@@ -83,15 +53,16 @@ def get_status_gamer(u, nonce):
             'meta_diaria': meta
         }
         
+        # Cálculo de Missões em Tempo Real
         hoje = datetime.now().strftime("%Y-%m-%d")
         h = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
         q = sum([int(i['total']) for i in h.data]) if h.data else 0
         a = sum([int(i['acertos']) for i in h.data]) if h.data else 0
         
         missoes = [
-            {"Icon": "🎯", "Meta": "Meta Diária", "Prog": q, "Objetivo": meta, "Unid": "q"},
+            {"Icon": "🎯", "Meta": "Meta de Questões", "Prog": q, "Objetivo": meta, "Unid": "q"},
             {"Icon": "✅", "Meta": "Foco em Acertos", "Prog": a, "Objetivo": int(meta * 0.7), "Unid": "hits"},
-            {"Icon": "🔥", "Meta": "XP Hoje", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
+            {"Icon": "⚡", "Meta": "XP Gerado Hoje", "Prog": q * 2, "Objetivo": meta * 2, "Unid": "xp"}
         ]
         return status, pd.DataFrame(missoes)
     except: return None, pd.DataFrame()
@@ -105,7 +76,50 @@ def update_meta_diaria(u, nova_meta):
     except: return False
 
 # ==========================================
-# 📝 REGISTROS (SIMULADOS E AULAS)
+# 📝 SISTEMA DE RESUMOS (NOVO)
+# ==========================================
+def get_resumo(u, area):
+    client = get_supabase()
+    try:
+        res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
+        return res.data[0]['conteudo'] if res.data else ""
+    except: return ""
+
+def salvar_resumo(u, area, texto):
+    client = get_supabase()
+    try:
+        client.table("resumos").upsert({"usuario_id": u, "grande_area": area, "conteudo": texto}).execute()
+        return True
+    except: return False
+
+# ==========================================
+# 📚 VIDEOTECA
+# ==========================================
+@st.cache_data(ttl=None)
+def listar_conteudo_videoteca():
+    try:
+        from biblioteca_conteudo import VIDEOTECA_GLOBAL
+        return pd.DataFrame(VIDEOTECA_GLOBAL, columns=['grande_area', 'assunto', 'tipo', 'subtipo', 'titulo', 'link', 'id'])
+    except: return pd.DataFrame()
+
+def get_area_por_assunto(assunto):
+    df = listar_conteudo_videoteca()
+    if df.empty: return "Geral"
+    match = df[df['assunto'] == assunto]
+    return match.iloc[0]['grande_area'] if not match.empty else "Geral"
+
+def get_lista_assuntos_nativa():
+    df = listar_conteudo_videoteca()
+    return sorted(df['assunto'].unique().tolist()) if not df.empty else ["Banco Geral"]
+
+def pesquisar_global(termo):
+    df = listar_conteudo_videoteca()
+    if df.empty: return df
+    mask = df['titulo'].str.contains(termo, case=False, na=False) | df['assunto'].str.contains(termo, case=False, na=False)
+    return df[mask]
+
+# ==========================================
+# 📝 REGISTROS
 # ==========================================
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True):
     client = get_supabase()
@@ -121,17 +135,16 @@ def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=T
             dt_rev = (dt + timedelta(days=7)).strftime("%Y-%m-%d")
             client.table("revisoes").insert({"usuario_id": u, "assunto_nome": assunto, "grande_area": area, "data_agendada": dt_rev, "tipo": "1 Semana", "status": "Pendente"}).execute()
         
+        # XP
         res_p = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
         if res_p.data:
             nxp = int(res_p.data[0]['xp']) + (int(total) * 2)
             client.table("perfil_gamer").update({"xp": nxp}).eq("usuario_id", u).execute()
-            
         trigger_refresh()
-        return "✅ Registrado!"
+        return "✅ Registado!"
     except: return "Erro"
 
 def registrar_simulado(u, dados, data_p=None):
-    """Registra simulado com Total e Acertos por área."""
     client = get_supabase()
     dt = data_p.strftime("%Y-%m-%d") if data_p else datetime.now().strftime("%Y-%m-%d")
     inserts = []
@@ -148,9 +161,8 @@ def registrar_simulado(u, dados, data_p=None):
         if res_p.data:
             nxp = int(res_p.data[0]['xp']) + int(tq * 2.5)
             client.table("perfil_gamer").update({"xp": nxp}).eq("usuario_id", u).execute()
-            
         trigger_refresh()
-        return f"✅ Simulado ({tq}q) salvo!"
+        return f"✅ Simulado salvo ({tq}q)!"
     except: return "Erro"
 
 @st.cache_data(ttl=300)
@@ -160,8 +172,9 @@ def get_dados_graficos(u, nonce):
         res = client.table("historico").select("*").eq("usuario_id", u).execute()
         df = pd.DataFrame(res.data)
         if df.empty: return df
-        mapa = get_mapa_areas()
-        df['area'] = df['assunto_nome'].str.strip().str.lower().map(mapa).fillna(df.get('area_manual', 'Geral'))
+        lib = listar_conteudo_videoteca()
+        area_map = lib.set_index('assunto')['grande_area'].to_dict() if not lib.empty else {}
+        df['area'] = df['assunto_nome'].map(area_map).fillna(df.get('area_manual', 'Geral'))
         df['total'] = df['total'].astype(int)
         df['acertos'] = df['acertos'].astype(int)
         df['percentual'] = (df['acertos'] / df['total'] * 100).round(1)
@@ -170,7 +183,7 @@ def get_dados_graficos(u, nonce):
     except: return pd.DataFrame()
 
 # ==========================================
-# 🔐 AUTH, AGENDA, RESUMOS
+# 🔐 AUTH & AGENDA
 # ==========================================
 def verificar_login(u, p):
     client = get_supabase()
@@ -208,22 +221,5 @@ def concluir_revisao(rid, ac, tot):
         return "✅ Concluído"
     except: return "Erro"
 
-def get_resumo(u, area):
-    client = get_supabase()
-    try:
-        res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
-        return res.data[0]['conteudo'] if res.data else ""
-    except: return ""
-
-def salvar_resumo(u, area, texto):
-    client = get_supabase()
-    try:
-        client.table("resumos").upsert({"usuario_id": u, "grande_area": area, "conteudo": texto}).execute()
-        return True
-    except: return False
-
-def deletar_resumo(rid): pass # Simplificado para evitar erro
-
-# Compatibilidade
-def excluir_conteudo(id): pass
+# STUBS
 def get_db(): return True
