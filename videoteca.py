@@ -1,41 +1,30 @@
 import streamlit as st
-import pandas as pd
-from database import listar_conteudo_videoteca, registrar_estudo, pesquisar_global
+from database import listar_conteudo_videoteca, registrar_estudo
 
 def render_videoteca(conn_ignored):
-    st.subheader("📚 Videoteca Master")
-    
-    # Barra de Pesquisa
-    termo = st.text_input("🔍 Pesquisar material...", placeholder="Ex: Pneumonia, Diabetes...", key="search_vid")
-    
-    if termo:
-        df = pesquisar_global(termo)
-    else:
-        df = listar_conteudo_videoteca()
-
+    st.header("📚 Sua Videoteca")
+    df = listar_conteudo_videoteca()
     if df.empty:
-        st.info("Nenhum material encontrado no arquivo biblioteca_conteudo.py")
+        st.warning("Biblioteca vazia. Use o script sync.py.")
         return
 
-    # Filtros por Área
+    # Busca
+    busca = st.text_input("🔍 Procurar aula...", placeholder="Digite o tema...")
+    if busca:
+        df = df[df['titulo'].str.contains(busca, case=False) | df['assunto'].str.contains(busca, case=False)]
+
     areas = ["Todas"] + sorted(df['grande_area'].unique().tolist())
-    escolha_area = st.pills("Grande Área:", areas, selection_mode="single", default="Todas", key="pills_area")
+    area_sel = st.pills("Filtro por Área:", areas, default="Todas")
+    if area_sel != "Todas": df = df[df['grande_area'] == area_sel]
 
-    if escolha_area != "Todas":
-        df = df[df['grande_area'] == escolha_area]
-
-    # Agrupar por Assunto
-    assuntos = df['assunto'].unique()
-    for ass in assuntos:
-        with st.expander(f"🔹 {ass}", expanded=False):
-            items = df[df['assunto'] == ass]
+    for assunto in df['assunto'].unique():
+        with st.expander(f"🔹 {assunto}"):
+            items = df[df['assunto'] == assunto]
             for _, row in items.iterrows():
-                col_info, col_btn = st.columns([3, 1])
-                with col_info:
-                    icon = "📽️" if row['tipo'] == 'Video' else "📄"
-                    st.markdown(f"{icon} **{row['titulo']}**")
-                    st.caption(f"{row['subtipo']}")
-                with col_btn:
+                c1, c2 = st.columns([3, 1])
+                c1.markdown(f"**{row['titulo']}**")
+                c1.caption(f"{row['tipo']} - {row['subtipo']}")
+                with c2:
                     st.link_button("Abrir", row['link'], use_container_width=True)
-                    if st.button("✅ Concluir", key=f"ok_{row['id']}", use_container_width=True):
-                        st.toast(registrar_estudo(st.session_state.username, ass, 1, 1))
+                    if st.button("OK", key=f"ok_{row['id']}", use_container_width=True):
+                        st.toast(registrar_estudo(st.session_state.username, assunto, 1, 1))
