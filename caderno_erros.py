@@ -41,7 +41,10 @@ def render_caderno_erros(conn_ignored):
                     # Pega o valor mais atual do session_state
                     texto_para_salvar = st.session_state[key_texto]
                     
-                    if salvar_caderno_erros(u, area, texto_para_salvar):
+                    # Tenta salvar e captura retorno
+                    sucesso = salvar_caderno_erros(u, area, texto_para_salvar)
+                    
+                    if sucesso:
                         st.toast("Anotação salva com sucesso!", icon="✅")
                     else:
-                        st.error("Erro ao salvar no banco de dados.")
+                        st.error("Erro ao salvar. Verifique se o banco de dados foi inicializado corretamente.")
