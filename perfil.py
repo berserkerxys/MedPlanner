@@ -72,8 +72,11 @@ def render_perfil(conn_ignored):
             novo = st.session_state.pf_meta_slider
             update_meta_diaria(u, novo)
             st.toast(f"Meta atualizada: {novo} questões!", icon="🔥")
-            # Sincroniza slider da sidebar para manter consistência visual imediata
-            st.session_state.sb_meta_slider = novo
+            # --- CORREÇÃO DE SINCRONIA ---
+            # Atualiza também a variável que controla o slider da sidebar
+            # para que, ao abrir a sidebar, o valor já esteja atualizado.
+            if "sb_meta_slider" in st.session_state:
+                st.session_state.sb_meta_slider = novo
 
         c_m1, c_m2 = st.columns([3, 1])
         with c_m1:
