@@ -15,24 +15,36 @@ def render_perfil(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # Dados
+    # Dados de Gamificação e Pessoais
     status, _ = get_status_gamer(u, nonce)
     total_q_global, conquistas, proximo_nivel = get_conquistas_e_stats(u)
     dados_pessoais = get_dados_pessoais(u)
     prog = get_progresso_hoje(u, nonce)
     
-    # Inicializa estado do slider do perfil se necessário
-    meta_banco = int(status['meta_diaria'])
+    # --- META DIÁRIA (SINCRONIZAÇÃO) ---
+    # Pega valor do banco
+    meta_banco = int(status.get('meta_diaria', 50))
+    
+    # Inicializa slider do perfil se não existir
     if "pf_meta_slider" not in st.session_state:
         st.session_state.pf_meta_slider = meta_banco
+        
+    # Sincroniza se houve mudança externa (ex: pela sidebar) e não estamos editando agora
+    # Nota: st.session_state é persistente, então só atualizamos se o banco trouxe algo novo após um rerun
+    # Mas como o slider é controlado pelo usuário, priorizamos a interação dele se ele estiver na tela.
+    # Uma boa prática é atualizar o session_state se ele diferir do banco AO ENTRAR na aba, mas aqui simplificamos.
 
-    # --- 1. CABEÇALHO ---
+    # --- 1. CABEÇALHO DO PERFIL ---
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 3, 2])
-        with c1: st.markdown("# 👨‍⚕️")
+        
+        with c1:
+            st.markdown("# 👨‍⚕️")
+        
         with c2:
             st.markdown(f"### Dr(a). {st.session_state.get('u_nome', u)}")
             st.markdown(f"**Rank:** {status['titulo']}")
+            st.caption(f"Nível {status['nivel']}")
             
             # Aniversário
             nasc_str = dados_pessoais.get('nascimento')
@@ -42,12 +54,15 @@ def render_perfil(conn_ignored):
                     if dt.day == datetime.now().day and dt.month == datetime.now().month:
                         st.success("🎂 Feliz Aniversário! 🎉")
                 except: pass
-        with c3: st.metric("Total Questões", f"{total_q_global}", delta="Carreira")
+            
+        with c3:
+            st.metric("Total Questões", f"{total_q_global}", delta="Carreira")
 
     st.divider()
-    
-    # --- 2. CONFIGURAÇÕES ---
+
+    # --- 2. CONFIGURAÇÕES (Meta e Dados) ---
     st.subheader("⚙️ Configurações e Dados")
+    
     tab_meta, tab_dados = st.tabs(["🎯 Meta Diária", "📝 Dados Pessoais"])
     
     with tab_meta:
@@ -57,15 +72,17 @@ def render_perfil(conn_ignored):
             novo = st.session_state.pf_meta_slider
             update_meta_diaria(u, novo)
             st.toast(f"Meta atualizada: {novo} questões!", icon="🔥")
-            # Sincroniza slider da sidebar se existir
-            if "sb_meta_slider" in st.session_state:
-                st.session_state.sb_meta_slider = novo
+            # Sincroniza slider da sidebar para manter consistência visual imediata
+            st.session_state.sb_meta_slider = novo
 
         c_m1, c_m2 = st.columns([3, 1])
         with c_m1:
             st.slider(
-                "Questões/dia:", 10, 200, 
-                value=meta_banco, 
+                "Questões/dia:", 
+                min_value=10, 
+                max_value=200, 
+                # Usa o valor da sessão se existir, senão o do banco
+                value=st.session_state.get("pf_meta_slider", meta_banco), 
                 step=5, 
                 key="pf_meta_slider", 
                 on_change=on_pf_meta_change
@@ -93,32 +110,38 @@ def render_perfil(conn_ignored):
                     st.success("Dados atualizados!")
                     time.sleep(0.5)
                     st.rerun()
-                else: st.error("Erro ao salvar.")
+                else:
+                    st.error("Erro ao salvar.")
 
     st.divider()
-    
-    # --- 3. TROFÉUS ---
+
+    # --- 3. SALA DE TROFÉUS ---
     st.subheader("🏆 Sala de Troféus")
+    
     perc_aprov = min(total_q_global / 20000, 1.0)
     st.progress(perc_aprov, text=f"Rumo à Aprovação (20k): {int(perc_aprov*100)}%")
     
+    if proximo_nivel:
+        st.info(f"Faltam **{proximo_nivel['meta'] - total_q_global}** questões para: **{proximo_nivel['nome']}**")
+
     cols = st.columns(3)
-    for i, c in enumerate(conquistas):
-        with cols[i%3]:
+    for idx, c in enumerate(conquistas):
+        with cols[idx % 3]:
             with st.container(border=True):
                 if c['desbloqueado']:
                     st.markdown(f"### {c['icon']} {c['nome']}")
-                    st.caption("✅ Conquistado")
+                    st.caption(f"✅ Conquistado ({c['meta']}q)")
                 else:
-                    st.markdown(f"### 🔒 {c['nome']}")
-                    st.caption(f"Meta: {c['meta']}q")
-                    st.progress(min(total_q_global/c['meta'], 1.0))
-    
+                    st.markdown(f"## 🔒 {c['nome']}")
+                    st.caption(f"Meta: {c['meta']} questões")
+                    st.progress(min(total_q_global / c['meta'], 1.0))
+
     st.divider()
-    
+
+    # --- 4. ZONA DE PERIGO ---
     with st.expander("🚨 Zona de Perigo"):
         st.warning("Ações Críticas")
         st.text_input("Usuário", value=u, disabled=True)
-        if st.button("Sair da Conta", type="primary"):
+        if st.button("Sair da Conta (Logout)", type="primary"):
             st.session_state.logado = False
             st.rerun()
