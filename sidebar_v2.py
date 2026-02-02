@@ -13,53 +13,46 @@ def render_sidebar():
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # 1. Carrega dados frescos do banco para este usuário
+    # 1. Carrega dados frescos do banco
     status, _ = get_status_gamer(u, nonce)
     prog = get_progresso_hoje(u, nonce)
     
-    # 2. Define o valor inicial da meta vindo do banco
-    # Se não houver nada no banco, usa 50 como padrão seguro
+    # Valor do banco (fonte de verdade para o login inicial)
     meta_banco = int(status.get('meta_diaria', 50))
     
-    # 3. Inicialização de Estado Robusta
-    # Só inicializamos a chave da sessão SE ela não existir.
-    # Isso impede que o slider seja resetado para 50 num rerun acidental.
+    # 2. Inicialização Inteligente do Estado
+    # Se a chave do slider não existe na sessão (ex: acabou de logar), cria com o valor do banco.
+    # Se já existe, MANTÉM o valor da sessão (respeitando a interação do usuário).
     if "sb_meta_slider" not in st.session_state:
         st.session_state.sb_meta_slider = meta_banco
-    
-    # Se o valor do banco for diferente da sessão (ex: mudou no perfil), sincronizamos.
-    # Mas só fazemos isso se a diferença for externa, para não atrapalhar a interação.
-    # Como o slider atualiza o banco no on_change, podemos confiar no banco como fonte da verdade ao carregar.
-    if meta_banco != st.session_state.sb_meta_slider:
-         st.session_state.sb_meta_slider = meta_banco
+
+    # (Removida a lógica agressiva que forçava a atualização e causava o "pulo" para 50)
 
     with st.sidebar:
         # --- Resumo Compacto ---
         st.markdown(f"**Dr(a). {st.session_state.get('u_nome', u)}**")
         st.caption(f"{status['titulo']} (Nv. {status['nivel']})")
         
-        # --- LÓGICA VISUAL ---
-        # Usa o valor da sessão para feedback imediato
-        meta_visual = st.session_state.sb_meta_slider if st.session_state.sb_meta_slider > 0 else 1
-        perc = min(prog / meta_visual, 1.0)
+        # --- Lógica Visual (Barra de Progresso) ---
+        # Usa o valor da sessão para que a barra reaja instantaneamente ao slider
+        meta_atual = st.session_state.sb_meta_slider
+        perc = min(prog / meta_atual, 1.0) if meta_atual > 0 else 0
         
-        st.progress(perc, text=f"Hoje: {prog}/{meta_visual}")
+        st.progress(perc, text=f"Hoje: {prog}/{meta_atual}")
         
         st.divider()
         
         # --- Meta Diária (Slider) ---
         def on_meta_change():
-            # Esta função roda quando o usuário SOLTA o slider
+            # Salva no banco apenas quando o usuário interage
             novo_valor = st.session_state.sb_meta_slider
-            
-            # 1. Salva no banco
             update_meta_diaria(u, novo_valor)
             
-            # 2. Sincroniza com slider do perfil (se existir na sessão)
+            # Sincroniza com a variável do perfil para manter consistência entre abas
             if "pf_meta_slider" in st.session_state:
                 st.session_state.pf_meta_slider = novo_valor
                 
-            st.toast(f"Meta salva: {novo_valor}", icon="💾")
+            st.toast(f"Meta definida: {novo_valor}", icon="🎯")
 
         st.markdown("### 🎯 Meta Diária")
         
@@ -67,11 +60,9 @@ def render_sidebar():
             "Ajuste seu alvo:",
             min_value=10,
             max_value=200,
-            # O valor inicial do slider DEVE ser a chave da sessão
-            value=st.session_state.sb_meta_slider,
             step=5,
-            key="sb_meta_slider",
-            on_change=on_meta_change,
+            key="sb_meta_slider",     # A chave mantém o estado automaticamente
+            on_change=on_meta_change, # Aciona o salvamento no banco
             label_visibility="collapsed"
         )
         
@@ -100,7 +91,6 @@ def render_sidebar():
 
         with tab_s:
             with st.expander("Lançar Notas por Área"):
-                # Mapeamento para labels mais bonitos
                 areas_map = {
                     "Preventiva": "Preventiva",
                     "Cirurgia": "Cirurgia",
@@ -126,10 +116,10 @@ def render_sidebar():
         
         st.divider()
         
-        # --- Botão de Logout ---
         if st.button("🚪 Sair (Logout)", use_container_width=True):
             st.session_state.logado = False
-            # Limpa chaves de sessão específicas
-            for k in ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]:
+            # Limpa sessão para garantir que o próximo login carregue dados frescos do banco
+            keys_to_clear = ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]
+            for k in keys_to_clear:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()

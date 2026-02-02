@@ -66,12 +66,24 @@ def render_dashboard(conn_ignored):
         cols = st.columns(3)
         row = df_m.iloc[0]
         
-        # A meta aqui vem de 'get_status_gamer', que lê do banco
+        # LÓGICA DE SINCRONIZAÇÃO DE META
+        # 1. Tenta pegar o valor 'vivo' da sessão (mais atualizado se o usuário acabou de mexer)
+        meta_sessao = st.session_state.get("sb_meta_slider") or st.session_state.get("pf_meta_slider")
+        
+        # 2. Se não tiver na sessão, pega do banco
         meta_banco = int(status.get('meta_diaria', 50))
+        
+        # 3. Define a meta final para exibição
+        meta_final = meta_sessao if meta_sessao else meta_banco
+        
         progresso_hoje = int(row['Prog'])
         
-        cols[0].metric("Meta Diária", f"{progresso_hoje} / {meta_banco}")
-        cols[1].progress(min(progresso_hoje/meta_banco, 1.0) if meta_banco > 0 else 0)
+        # Atualiza visualmente o card com a meta sincronizada
+        cols[0].metric("Meta Diária", f"{progresso_hoje} / {meta_final}")
+        
+        # Barra de progresso com proteção de divisão por zero
+        perc_meta = min(progresso_hoje/meta_final, 1.0) if meta_final > 0 else 0
+        cols[1].progress(perc_meta)
         
         # XP Ganho Hoje
         xp_hoje = progresso_hoje * 2 # Exemplo de cálculo simples
