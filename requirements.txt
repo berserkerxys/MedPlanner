@@ -7,3 +7,4 @@ bcrypt
 plotly
 supabase
 google-generativeai
+groq
