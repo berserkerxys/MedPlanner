@@ -18,6 +18,8 @@ def render_sidebar():
     prog = get_progresso_hoje(u, nonce)
     
     # 1. Sincronização Inicial do Slider
+    # Se o valor no banco mudou externamente (ex: no Perfil), atualizamos o session_state
+    # Mas só fazemos isso se a chave ainda não existir para evitar loop de reset
     meta_banco = int(status['meta_diaria'])
     if "sb_meta_slider" not in st.session_state:
         st.session_state.sb_meta_slider = meta_banco
@@ -28,6 +30,8 @@ def render_sidebar():
         st.caption(f"{status['titulo']} (Nv. {status['nivel']})")
         
         # --- LÓGICA VISUAL IMEDIATA ---
+        # Usamos o valor do slider (estado atual da interface) para calcular a barra
+        # Isso garante que a barra reaja instantaneamente ao arrastar
         meta_visual = st.session_state.sb_meta_slider if st.session_state.sb_meta_slider > 0 else 1
         perc = min(prog / meta_visual, 1.0)
         
@@ -37,6 +41,7 @@ def render_sidebar():
         
         # --- Meta Diária (Slider) ---
         def on_meta_change():
+            # Salva o valor atual do session_state no banco
             novo_valor = st.session_state.sb_meta_slider
             update_meta_diaria(u, novo_valor)
             st.toast(f"Meta ajustada: {novo_valor}", icon="🎯")
@@ -46,10 +51,10 @@ def render_sidebar():
             "Ajuste seu alvo:",
             min_value=10,
             max_value=200,
-            value=meta_banco,
+            value=meta_banco, # Valor inicial padrão
             step=5,
             key="sb_meta_slider",
-            on_change=on_meta_change,
+            on_change=on_meta_change, # Callback para salvar
             label_visibility="collapsed"
         )
         
