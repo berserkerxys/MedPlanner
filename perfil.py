@@ -12,128 +12,113 @@ from database import (
 
 def render_perfil(conn_ignored):
     st.header("👤 Perfil & Conquistas")
-    
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # Dados de Gamificação
+    # Dados
     status, _ = get_status_gamer(u, nonce)
     total_q_global, conquistas, proximo_nivel = get_conquistas_e_stats(u)
-    
-    # Dados Pessoais
     dados_pessoais = get_dados_pessoais(u)
+    prog = get_progresso_hoje(u, nonce)
     
-    # --- 1. CABEÇALHO DO PERFIL ---
+    # Inicializa estado do slider do perfil se necessário
+    meta_banco = int(status['meta_diaria'])
+    if "pf_meta_slider" not in st.session_state:
+        st.session_state.pf_meta_slider = meta_banco
+
+    # --- 1. CABEÇALHO ---
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 3, 2])
-        
-        with c1:
-            st.markdown("# 👨‍⚕️")
-        
+        with c1: st.markdown("# 👨‍⚕️")
         with c2:
             st.markdown(f"### Dr(a). {st.session_state.get('u_nome', u)}")
             st.markdown(f"**Rank:** {status['titulo']}")
-            st.caption(f"Nível {status['nivel']}")
             
-            # Checagem de Aniversário
+            # Aniversário
             nasc_str = dados_pessoais.get('nascimento')
             if nasc_str:
                 try:
-                    nasc_dt = datetime.strptime(nasc_str, "%Y-%m-%d")
-                    hoje = datetime.now()
-                    if today_is_birthday(nasc_dt, hoje):
-                        st.success("🎂 Feliz Aniversário, Doutor(a)! Hoje o dia é seu! 🎉")
+                    dt = datetime.strptime(nasc_str, "%Y-%m-%d")
+                    if dt.day == datetime.now().day and dt.month == datetime.now().month:
+                        st.success("🎂 Feliz Aniversário! 🎉")
                 except: pass
-            
-        with c3:
-            st.metric("Total Questões", f"{total_q_global}", delta="Acumulado")
+        with c3: st.metric("Total Questões", f"{total_q_global}", delta="Carreira")
 
     st.divider()
-
-    # --- 2. CONFIGURAÇÕES (Meta e Dados) ---
-    st.subheader("⚙️ Configurações e Dados")
     
+    # --- 2. CONFIGURAÇÕES ---
+    st.subheader("⚙️ Configurações e Dados")
     tab_meta, tab_dados = st.tabs(["🎯 Meta Diária", "📝 Dados Pessoais"])
     
     with tab_meta:
         st.caption("Defina seu ritmo de estudos diário:")
-        def on_meta_change():
-            nova_meta = st.session_state.slider_meta_perfil
-            update_meta_diaria(u, nova_meta)
-            st.toast(f"Meta: {nova_meta} questões!", icon="🔥")
+        
+        def on_pf_meta_change():
+            novo = st.session_state.pf_meta_slider
+            update_meta_diaria(u, novo)
+            st.toast(f"Meta atualizada: {novo} questões!", icon="🔥")
+            # Sincroniza slider da sidebar se existir
+            if "sb_meta_slider" in st.session_state:
+                st.session_state.sb_meta_slider = novo
 
-        meta_val = int(status['meta_diaria'])
         c_m1, c_m2 = st.columns([3, 1])
         with c_m1:
-            st.slider("Questões/dia:", 10, 200, meta_val, 5, key="slider_meta_perfil", on_change=on_meta_change)
+            st.slider(
+                "Questões/dia:", 10, 200, 
+                value=meta_banco, 
+                step=5, 
+                key="pf_meta_slider", 
+                on_change=on_pf_meta_change
+            )
         with c_m2:
-            prog = get_progresso_hoje(u, nonce)
-            st.metric("Hoje", f"{prog}/{meta_val}")
+            # Feedback visual instantâneo usando o estado do slider
+            meta_vis = st.session_state.pf_meta_slider if st.session_state.pf_meta_slider > 0 else 1
+            st.metric("Hoje", f"{prog}/{meta_vis}", delta=f"{int(prog/meta_vis*100)}%")
 
     with tab_dados:
-        with st.form("form_dados_pessoais"):
-            c_d1, c_d2 = st.columns(2)
+        with st.form("f_dados"):
+            c1, c2 = st.columns(2)
+            em = c1.text_input("Email", value=dados_pessoais.get("email", ""))
             
-            email_atual = dados_pessoais.get("email", "")
-            nasc_atual_str = dados_pessoais.get("nascimento")
-            nasc_val = None
-            if nasc_atual_str:
-                try: nasc_val = datetime.strptime(nasc_atual_str, "%Y-%m-%d")
+            dt_val = None
+            if dados_pessoais.get("nascimento"):
+                try: dt_val = datetime.strptime(dados_pessoais['nascimento'], "%Y-%m-%d")
                 except: pass
-
-            email_input = c_d1.text_input("E-mail", value=email_atual, placeholder="seuemail@exemplo.com")
-            nasc_input = c_d2.date_input("Data de Nascimento", value=nasc_val, format="DD/MM/YYYY")
+            
+            nasc = c2.date_input("Nascimento", value=dt_val, format="DD/MM/YYYY")
             
             if st.form_submit_button("💾 Salvar Dados"):
-                nasc_fmt = nasc_input.strftime("%Y-%m-%d") if nasc_input else None
-                if update_dados_pessoais(u, email_input, nasc_fmt):
-                    st.success("Dados atualizados com sucesso!")
+                nasc_fmt = nasc.strftime("%Y-%m-%d") if nasc else None
+                if update_dados_pessoais(u, em, nasc_fmt):
+                    st.success("Dados atualizados!")
+                    time.sleep(0.5)
                     st.rerun()
-                else:
-                    st.error("Erro ao salvar.")
+                else: st.error("Erro ao salvar.")
 
     st.divider()
-
-    # --- 3. SALA DE TROFÉUS ---
-    st.subheader("🏆 Sala de Troféus")
     
+    # --- 3. TROFÉUS ---
+    st.subheader("🏆 Sala de Troféus")
     perc_aprov = min(total_q_global / 20000, 1.0)
     st.progress(perc_aprov, text=f"Rumo à Aprovação (20k): {int(perc_aprov*100)}%")
     
-    if proximo_nivel:
-        st.info(f"Faltam **{proximo_nivel['meta'] - total_q_global}** questões para: **{proximo_nivel['nome']}**")
-
     cols = st.columns(3)
-    for idx, c in enumerate(conquistas):
-        with cols[idx % 3]:
+    for i, c in enumerate(conquistas):
+        with cols[i%3]:
             with st.container(border=True):
                 if c['desbloqueado']:
-                    st.markdown(f"## {c['icon']} {c['nome']}")
-                    st.caption(f"✅ Conquistado ({c['meta']}q)")
+                    st.markdown(f"### {c['icon']} {c['nome']}")
+                    st.caption("✅ Conquistado")
                 else:
-                    st.markdown(f"## 🔒 {c['nome']}")
-                    st.caption(f"Meta: {c['meta']} questões")
-                    st.progress(min(total_q_global / c['meta'], 1.0))
-
+                    st.markdown(f"### 🔒 {c['nome']}")
+                    st.caption(f"Meta: {c['meta']}q")
+                    st.progress(min(total_q_global/c['meta'], 1.0))
+    
     st.divider()
-
-    # --- 4. ZONA DE PERIGO (ALTERAR LOGIN/LOGOUT) ---
-    with st.expander("🚨 Zona de Perigo / Segurança"):
-        st.error("Atenção: Ações críticas.")
-        
-        c_p1, c_p2 = st.columns(2)
-        
-        with c_p1:
-            st.markdown("**Alterar Credenciais**")
-            st.caption("Para alterar sua senha, entre em contato com o suporte ou use a função de recuperação (em breve).")
-            st.text_input("Usuário (Imutável):", value=u, disabled=True)
-            st.text_input("ID Interno:", value=f"MED-{hash(u)%100000:05d}", disabled=True)
-        
-        with c_p2:
-            st.markdown("**Sessão**")
-            if st.button("Sair da Conta (Logout)", type="primary"):
-                st.session_state.logado = False
-                st.rerun()
-
-def today_is_birthday(nasc, hoje):
-    return nasc.month == hoje.month and nasc.day == hoje.day
+    
+    with st.expander("🚨 Zona de Perigo"):
+        st.warning("Ações Críticas")
+        st.text_input("Usuário", value=u, disabled=True)
+        if st.button("Sair da Conta", type="primary"):
+            st.session_state.logado = False
+            st.rerun()

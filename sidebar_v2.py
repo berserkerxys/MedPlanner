@@ -5,49 +5,83 @@ from database import (
     registrar_estudo,
     registrar_simulado,
     get_progresso_hoje,
-    get_status_gamer
+    get_status_gamer,
+    update_meta_diaria
 )
 
 def render_sidebar():
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
+    # Carrega dados
     status, _ = get_status_gamer(u, nonce)
     prog = get_progresso_hoje(u, nonce)
-    meta = status['meta_diaria']
     
+    # 1. Sincronização Inicial do Slider
+    # Se o valor no banco mudou externamente (ex: no Perfil), atualizamos o session_state
+    # Mas só fazemos isso se a chave ainda não existir para evitar loop de reset
+    meta_banco = int(status['meta_diaria'])
+    if "sb_meta_slider" not in st.session_state:
+        st.session_state.sb_meta_slider = meta_banco
+
     with st.sidebar:
         # --- Resumo Compacto ---
         st.markdown(f"**Dr(a). {st.session_state.get('u_nome', u)}**")
-        st.caption(f"{status['titulo']} (Nível {status['nivel']})")
+        st.caption(f"{status['titulo']} (Nv. {status['nivel']})")
         
-        # Barra de meta diária
-        perc = min(prog/meta, 1.0) if meta > 0 else 0
-        st.progress(perc, text=f"Hoje: {prog}/{meta}")
+        # --- LÓGICA VISUAL IMEDIATA ---
+        # Usamos o valor do slider (estado atual da interface) para calcular a barra
+        # Isso garante que a barra reaja instantaneamente ao arrastar
+        meta_visual = st.session_state.sb_meta_slider if st.session_state.sb_meta_slider > 0 else 1
+        perc = min(prog / meta_visual, 1.0)
+        
+        st.progress(perc, text=f"Hoje: {prog}/{meta_visual}")
+        
+        st.divider()
+        
+        # --- Meta Diária (Slider) ---
+        def on_meta_change():
+            # Salva o valor atual do session_state no banco
+            novo_valor = st.session_state.sb_meta_slider
+            update_meta_diaria(u, novo_valor)
+            st.toast(f"Meta ajustada: {novo_valor}", icon="🎯")
+
+        st.markdown("### 🎯 Meta Diária")
+        st.slider(
+            "Ajuste seu alvo:",
+            min_value=10,
+            max_value=200,
+            value=meta_banco, # Valor inicial padrão
+            step=5,
+            key="sb_meta_slider",
+            on_change=on_meta_change, # Callback para salvar
+            label_visibility="collapsed"
+        )
         
         st.divider()
         
         # --- Registro Rápido ---
         st.markdown("### ⚡ Registro Rápido")
         
-        tab_aula, tab_sim = st.tabs(["Aula", "Simulado"])
+        tab_a, tab_s = st.tabs(["Aula", "Simulado"])
         
-        with tab_aula:
+        with tab_a:
             lista = get_lista_assuntos_nativa()
-            assunto = st.selectbox("Tema:", lista, placeholder="Selecione...", index=None, label_visibility="collapsed")
+            assunto = st.selectbox("Tema:", lista, index=None, label_visibility="collapsed", placeholder="Tema...")
             c1, c2 = st.columns(2)
             ac = c1.number_input("Acertos", 0, 300, 0, key="sb_ac")
             tot = c2.number_input("Total", 1, 300, 10, key="sb_tot")
             
-            if st.button("✅ Salvar", use_container_width=True, key="btn_save_sb"):
+            if st.button("✅ Salvar", use_container_width=True, key="btn_sb"):
                 if assunto:
                     msg = registrar_estudo(u, assunto, ac, tot)
                     st.success(msg)
                     time.sleep(0.5)
                     st.rerun()
-                else: st.warning("Selecione um tema!")
+                else:
+                    st.warning("Escolha o tema!")
 
-        with tab_sim:
+        with tab_s:
             with st.expander("Lançar Notas por Área"):
                 areas = ["Preventiva", "Cirurgia", "Clínica Médica", "Ginecologia e Obstetrícia", "Pediatria"]
                 dados = {}
