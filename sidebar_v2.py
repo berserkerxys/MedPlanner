@@ -18,19 +18,28 @@ def render_sidebar():
     prog = get_progresso_hoje(u, nonce)
     
     # 2. Define o valor inicial da meta vindo do banco
+    # Se não houver nada no banco, usa 50 como padrão seguro
     meta_banco = int(status.get('meta_diaria', 50))
     
-    # Lógica de Estado do Slider:
-    # Se o slider ainda não existe na sessão, inicializamos com o valor do banco.
+    # 3. Inicialização de Estado Robusta
+    # Só inicializamos a chave da sessão SE ela não existir.
+    # Isso impede que o slider seja resetado para 50 num rerun acidental.
     if "sb_meta_slider" not in st.session_state:
         st.session_state.sb_meta_slider = meta_banco
     
+    # Se o valor do banco for diferente da sessão (ex: mudou no perfil), sincronizamos.
+    # Mas só fazemos isso se a diferença for externa, para não atrapalhar a interação.
+    # Como o slider atualiza o banco no on_change, podemos confiar no banco como fonte da verdade ao carregar.
+    if meta_banco != st.session_state.sb_meta_slider:
+         st.session_state.sb_meta_slider = meta_banco
+
     with st.sidebar:
         # --- Resumo Compacto ---
         st.markdown(f"**Dr(a). {st.session_state.get('u_nome', u)}**")
         st.caption(f"{status['titulo']} (Nv. {status['nivel']})")
         
         # --- LÓGICA VISUAL ---
+        # Usa o valor da sessão para feedback imediato
         meta_visual = st.session_state.sb_meta_slider if st.session_state.sb_meta_slider > 0 else 1
         perc = min(prog / meta_visual, 1.0)
         
@@ -40,14 +49,13 @@ def render_sidebar():
         
         # --- Meta Diária (Slider) ---
         def on_meta_change():
-            # Esta função roda quando o usuário SOLTA o slider na sidebar
+            # Esta função roda quando o usuário SOLTA o slider
             novo_valor = st.session_state.sb_meta_slider
             
             # 1. Salva no banco
             update_meta_diaria(u, novo_valor)
             
-            # 2. Sincroniza com o slider do PERFIL (se existir na sessão)
-            # Isso garante que ao navegar para o perfil, o valor esteja atualizado
+            # 2. Sincroniza com slider do perfil (se existir na sessão)
             if "pf_meta_slider" in st.session_state:
                 st.session_state.pf_meta_slider = novo_valor
                 
@@ -59,7 +67,8 @@ def render_sidebar():
             "Ajuste seu alvo:",
             min_value=10,
             max_value=200,
-            value=st.session_state.get("sb_meta_slider", meta_banco),
+            # O valor inicial do slider DEVE ser a chave da sessão
+            value=st.session_state.sb_meta_slider,
             step=5,
             key="sb_meta_slider",
             on_change=on_meta_change,
