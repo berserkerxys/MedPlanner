@@ -100,6 +100,7 @@ def render_sidebar():
 
         with tab_s:
             with st.expander("Lançar Notas por Área"):
+                # Mapeamento para labels mais bonitos
                 areas_map = {
                     "Preventiva": "Preventiva",
                     "Cirurgia": "Cirurgia",
@@ -125,6 +126,7 @@ def render_sidebar():
         
         st.divider()
         
+        # --- Botão de Logout ---
         if st.button("🚪 Sair (Logout)", use_container_width=True):
             st.session_state.logado = False
             # Limpa chaves de sessão específicas
