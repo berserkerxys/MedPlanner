@@ -14,38 +14,23 @@ def render_sidebar():
     nonce = st.session_state.data_nonce
     
     # 1. Carrega dados frescos do banco para este usuário
-    # A função get_status_gamer já deve retornar a meta salva no banco (tabela perfil_gamer)
     status, _ = get_status_gamer(u, nonce)
     prog = get_progresso_hoje(u, nonce)
     
-    # 2. Define o valor inicial da meta
-    # Prioridade: 1. Banco de dados -> 2. Padrão 50
-    # Importante: Convertemos para int para evitar erros no slider
+    # 2. Define o valor inicial da meta vindo do banco
     meta_banco = int(status.get('meta_diaria', 50))
     
     # Lógica de Estado do Slider:
-    # Se o slider ainda não existe na sessão (primeiro carregamento ou após login), 
-    # inicializamos com o valor do banco.
-    # Se já existe, verificamos se é diferente do banco (pode ter sido atualizado em outra aba)
-    # e sincronizamos se necessário, mas com cuidado para não "travar" a interface.
+    # Se o slider ainda não existe na sessão, inicializamos com o valor do banco.
     if "sb_meta_slider" not in st.session_state:
         st.session_state.sb_meta_slider = meta_banco
     
-    # Se o valor no banco mudou (ex: alterado na aba Perfil), atualizamos o slider
-    # (Opcional, mas bom para consistência se você tem o slider em dois lugares)
-    if meta_banco != st.session_state.sb_meta_slider:
-         # Apenas atualiza se a diferença for externa, não enquanto o usuário arrasta
-         # Como st.rerun() recarrega tudo, assumimos que o banco é a fonte da verdade ao carregar
-         pass 
-
     with st.sidebar:
         # --- Resumo Compacto ---
         st.markdown(f"**Dr(a). {st.session_state.get('u_nome', u)}**")
         st.caption(f"{status['titulo']} (Nv. {status['nivel']})")
         
         # --- LÓGICA VISUAL ---
-        # Usamos o valor que está NO BANCO como referência principal para a barra,
-        # ou o valor local se o usuário estiver arrastando agora (feedback instantâneo)
         meta_visual = st.session_state.sb_meta_slider if st.session_state.sb_meta_slider > 0 else 1
         perc = min(prog / meta_visual, 1.0)
         
@@ -55,24 +40,25 @@ def render_sidebar():
         
         # --- Meta Diária (Slider) ---
         def on_meta_change():
-            # Esta função roda quando o usuário SOLTA o slider
+            # Esta função roda quando o usuário SOLTA o slider na sidebar
             novo_valor = st.session_state.sb_meta_slider
-            # Salva no banco para este usuário específico
+            
+            # 1. Salva no banco
             update_meta_diaria(u, novo_valor)
+            
+            # 2. Sincroniza com o slider do PERFIL (se existir na sessão)
+            # Isso garante que ao navegar para o perfil, o valor esteja atualizado
+            if "pf_meta_slider" in st.session_state:
+                st.session_state.pf_meta_slider = novo_valor
+                
             st.toast(f"Meta salva: {novo_valor}", icon="💾")
 
         st.markdown("### 🎯 Meta Diária")
-        
-        # O segredo aqui é usar 'value=meta_banco' para que, ao recarregar a página (F5/Login),
-        # ele pegue o valor que foi salvo no banco, e não um valor fixo ou antigo da sessão.
-        # Mas precisamos garantir que a chave 'sb_meta_slider' seja atualizada.
         
         st.slider(
             "Ajuste seu alvo:",
             min_value=10,
             max_value=200,
-            # Se a sessão já tem um valor (interação recente), usa ele. 
-            # Senão, usa o do banco. Isso previne "pulos" estranhos.
             value=st.session_state.get("sb_meta_slider", meta_banco),
             step=5,
             key="sb_meta_slider",
@@ -105,7 +91,6 @@ def render_sidebar():
 
         with tab_s:
             with st.expander("Lançar Notas por Área"):
-                # Mapeamento para labels mais bonitos
                 areas_map = {
                     "Preventiva": "Preventiva",
                     "Cirurgia": "Cirurgia",
@@ -131,12 +116,9 @@ def render_sidebar():
         
         st.divider()
         
-        # --- Botão de Logout ---
         if st.button("🚪 Sair (Logout)", use_container_width=True):
             st.session_state.logado = False
-            # Limpa chaves de sessão específicas para evitar "sujeira" no próximo login
-            keys_to_clear = ["sb_meta_slider", "video_limit", "chat_history"]
-            for k in keys_to_clear:
-                if k in st.session_state:
-                    del st.session_state[k]
+            # Limpa chaves de sessão específicas
+            for k in ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]:
+                if k in st.session_state: del st.session_state[k]
             st.rerun()
