@@ -8,7 +8,8 @@ from database import (
     normalizar_area, 
     calcular_meta_questoes,
     resetar_revisoes_aula,
-    registrar_estudo # Necessário para agendar a revisão no histórico/agenda
+    registrar_estudo, # Necessário para agendar a revisão no histórico/agenda
+    get_supabase
 )
 
 # Configuração Visual
@@ -39,12 +40,16 @@ def agendar_revisao_callback(u, aula_nome, acertos_total, total_total):
     """
     # 1. Registra no histórico como um estudo consolidado, o que dispara o agendamento de revisão (srs=True)
     # Usamos "Pos-Aula" para garantir que o sistema entenda como estudo completo
+    # ATENÇÃO: A função registrar_estudo no database.py já lida com a inserção na tabela de revisões se srs=True
     msg = registrar_estudo(u, aula_nome, acertos_total, total_total, tipo_estudo="Pos-Aula", srs=True)
     
     if "salvo" in msg or "Salvo" in msg:
         st.toast(f"Revisão agendada para {aula_nome}!", icon="📅")
-        # Opcional: Marcar visualmente no cronograma que a revisão está agendada
-        # Poderíamos atualizar o estado local se quiséssemos um indicador visual persistente aqui
+        
+        # 2. Atualiza o status no cronograma para refletir que a revisão foi agendada (opcional, visual)
+        # Poderíamos marcar um flag 'revisao_agendada': True no estado do cronograma
+        
+        # st.rerun() # Opcional: recarrega para mostrar mudanças
     else:
         st.error(f"Erro ao agendar: {msg}")
 
