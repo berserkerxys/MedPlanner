@@ -105,7 +105,7 @@ def render_cronograma(conn_ignored):
     c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
     c_kpi1.metric("Questões Totais", total_questoes)
     c_kpi2.metric("Pendentes", total_aulas - concluidas)
-    c_kpi3.caption("Priorize os temas 💎 Diamante  | 🟢 após diamante | 🟡 após verde | 🔴 após amarela")
+    c_kpi3.caption("Priorize os temas 💎 Diamante 🟢 após diamante 🟡 após verde 🔴 após amarela")
     
     st.divider()
 
