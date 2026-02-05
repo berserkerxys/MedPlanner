@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 import bcrypt
+import random
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -71,84 +72,81 @@ def trigger_refresh():
     st.session_state.data_nonce += 1
 
 def _ensure_local_db():
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("CREATE TABLE IF NOT EXISTS historico (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, area_manual TEXT, data_estudo TEXT, acertos INTEGER, total INTEGER)")
-        c.execute("CREATE TABLE IF NOT EXISTS revisoes (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, grande_area TEXT, data_agendada TEXT, tipo TEXT, status TEXT)")
-        c.execute("CREATE TABLE IF NOT EXISTS perfil_gamer (usuario_id TEXT PRIMARY KEY, xp INTEGER, titulo TEXT, meta_diaria INTEGER)")
-        c.execute("CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, nome TEXT, password_hash TEXT, email TEXT, data_nascimento TEXT)")
-        # Tabela resumos vital para o caderno de erros
-        c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
-        c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
-        
-        # Migrações
-        try: c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
-        except: pass
-        try: c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
-        except: pass
-        
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"Erro fatal ao criar DB local: {e}")
-        return False
-
-# --- 4. CADERNO DE ERROS (CORRIGIDO) ---
-def get_caderno_erros(u, area):
-    # Tenta Supabase
-    client = get_supabase()
-    if client:
-        try:
-            res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
-            if res.data: return res.data[0]['conteudo']
-        except Exception as e:
-            print(f"Erro leitura Supabase: {e}")
-            # Se falhar, tenta local abaixo
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # Tabelas
+    c.execute("CREATE TABLE IF NOT EXISTS historico (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, area_manual TEXT, data_estudo TEXT, acertos INTEGER, total INTEGER)")
+    c.execute("CREATE TABLE IF NOT EXISTS revisoes (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, grande_area TEXT, data_agendada TEXT, tipo TEXT, status TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS perfil_gamer (usuario_id TEXT PRIMARY KEY, xp INTEGER, titulo TEXT, meta_diaria INTEGER)")
+    c.execute("CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, nome TEXT, password_hash TEXT, email TEXT, data_nascimento TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
+    c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
     
-    # Fallback Local
-    try:
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
-            return row[0] if row else ""
-    except Exception as e:
-        print(f"Erro leitura Local: {e}")
-        return ""
-
-def salvar_caderno_erros(u, area, texto):
-    if texto is None: texto = ""
-    client = get_supabase()
+    # Migrações
+    try: c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
+    except: pass
     
-    # 1. Tenta Supabase
-    if client:
-        try:
-            client.table("resumos").upsert({
-                "usuario_id": u, 
-                "grande_area": area, 
-                "conteudo": texto
-            }).execute()
+    conn.commit()
+    conn.close()
+
+# --- 4. PERSISTÊNCIA CRONOGRAMA (ATUALIZADA) ---
+def get_cronograma_status(usuario_id):
+    """
+    Retorna o estado do cronograma.
+    Formato Novo: { 'Nome Aula': {'feito': bool, 'prioridade': str, 'acertos': int, 'total': int} }
+    """
+    client = get_supabase()
+    dados_raw = {}
+    
+    try:
+        if client:
+            res = client.table("cronogramas").select("estado_json").eq("usuario_id", usuario_id).execute()
+            if res.data:
+                d = res.data[0].get("estado_json")
+                dados_raw = d if isinstance(d, dict) else json.loads(d)
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                row = conn.execute("SELECT estado_json FROM cronogramas WHERE usuario_id=?", (usuario_id,)).fetchone()
+                if row and row[0]:
+                    dados_raw = json.loads(row[0])
+    except: pass
+
+    # Migração de Dados (Compatibilidade com versões antigas que salvavam apenas True/False)
+    dados_processados = {}
+    for aula, valor in dados_raw.items():
+        if isinstance(valor, bool):
+            # Converte formato antigo para novo
+            dados_processados[aula] = {
+                "feito": valor, 
+                "prioridade": "Normal", 
+                "acertos": 0, 
+                "total": 0
+            }
+        else:
+            dados_processados[aula] = valor
+            
+    return dados_processados
+
+def salvar_cronograma_status(usuario_id, estado_dict):
+    client = get_supabase()
+    # Salva o dicionário completo agora
+    json_str = json.dumps(estado_dict, ensure_ascii=False)
+    try:
+        if client:
+            client.table("cronogramas").upsert({"usuario_id": usuario_id, "estado_json": estado_dict}).execute()
+            trigger_refresh()
             return True
-        except Exception as e:
-            print(f"Erro salvamento Supabase (Fallback para Local): {e}")
-    
-    # 2. Fallback Local (SQLite)
-    try:
         _ensure_local_db()
         with sqlite3.connect(DB_NAME) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", 
-                (u, area, texto)
-            )
+            conn.execute("INSERT OR REPLACE INTO cronogramas (usuario_id, estado_json) VALUES (?, ?)", (usuario_id, json_str))
+        trigger_refresh()
         return True
-    except Exception as e:
-        print(f"Erro salvamento Local: {e}")
-        # Retorna o erro exato para debug no Streamlit se necessário
-        st.error(f"Erro técnico no banco de dados: {e}")
-        return False
+    except: return False
 
-# --- 5. DEMAIS FUNÇÕES (MANTIDAS) ---
+# --- DEMAIS FUNÇÕES (MANTIDAS IGUAIS) ---
 def get_dados_pessoais(u):
     client = get_supabase()
     dados = {"email": "", "nascimento": None}
@@ -200,34 +198,26 @@ def get_benchmark_dados(u, df_usuario):
         dados.append({"Area": area, "Tipo": "Comunidade", "Performance": stats_comunidade[area]})
     return pd.DataFrame(dados)
 
-def get_cronograma_status(usuario_id):
+def get_caderno_erros(u, area):
     client = get_supabase()
     try:
         if client:
-            res = client.table("cronogramas").select("estado_json").eq("usuario_id", usuario_id).execute()
-            if res.data:
-                dados = res.data[0].get("estado_json")
-                return dados if isinstance(dados, dict) else json.loads(dados)
-            return {}
+            res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
+            return res.data[0]['conteudo'] if res.data else ""
         _ensure_local_db()
         with sqlite3.connect(DB_NAME) as conn:
-            row = conn.execute("SELECT estado_json FROM cronogramas WHERE usuario_id=?", (usuario_id,)).fetchone()
-            return json.loads(row[0]) if row and row[0] else {}
-    except: return {}
+            row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
+            return row[0] if row else ""
+    except: return ""
 
-def salvar_cronograma_status(usuario_id, estado_dict):
+def salvar_caderno_erros(u, area, texto):
     client = get_supabase()
-    estado_limpo = {k: v for k, v in estado_dict.items() if v}
-    json_str = json.dumps(estado_limpo, ensure_ascii=False)
     try:
-        if client:
-            client.table("cronogramas").upsert({"usuario_id": usuario_id, "estado_json": estado_limpo}).execute()
-            trigger_refresh()
-            return True
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            conn.execute("INSERT OR REPLACE INTO cronogramas (usuario_id, estado_json) VALUES (?, ?)", (usuario_id, json_str))
-        trigger_refresh()
+        if client: client.table("resumos").upsert({"usuario_id": u, "grande_area": area, "conteudo": texto}).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", (u, area, texto))
         return True
     except: return False
 

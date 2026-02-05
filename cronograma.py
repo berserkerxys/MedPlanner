@@ -3,141 +3,134 @@ import pandas as pd
 import re
 from database import get_cronograma_status, salvar_cronograma_status, normalizar_area
 
-def auto_save_callback(u, dados_brutos):
-    """
-    Função chamada automaticamente toda vez que um checkbox é alterado.
-    Lê o estado atual da sessão e salva no banco imediatamente.
-    """
-    novo_estado = {}
-    # dados_brutos aqui é a lista completa de tuplas, garantindo que salvamos tudo
-    for item in dados_brutos:
-        nome_aula = item[0] if isinstance(item, tuple) else item
-        key = f"chk_{nome_aula}"
-        if st.session_state.get(key, False):
-            novo_estado[nome_aula] = True
-            
-    salvar_cronograma_status(u, novo_estado)
-    st.toast("Salvo automaticamente!", icon="✅")
+# Opções de Prioridade
+PRIORIDADES = ["Normal", "Diamante", "Ouro", "Prata", "Verde", "Vermelho"]
 
-def ler_blocos_do_arquivo():
+def update_row_callback(u, aula_nome, full_state):
     """
-    Lê o arquivo aulas_medcof.py como texto para identificar os comentários de 'BLOCO'.
-    Retorna uma lista de dicionários: [{'Bloco': 'BLOCO 1', 'Aula': 'Nome...', 'Area': 'Area...'}, ...]
+    Callback executado ao alterar qualquer widget de uma linha.
+    Atualiza o estado global e salva no banco.
     """
-    items_mapeados = []
+    # Recupera valores atuais dos widgets daquela linha
+    check = st.session_state.get(f"chk_{aula_nome}", False)
+    prio = st.session_state.get(f"prio_{aula_nome}", "Normal")
+    ac = st.session_state.get(f"ac_{aula_nome}", 0)
+    tt = st.session_state.get(f"tt_{aula_nome}", 0)
+    
+    # Atualiza o dicionário mestre
+    full_state[aula_nome] = {
+        "feito": check,
+        "prioridade": prio,
+        "acertos": ac,
+        "total": tt
+    }
+    
+    # Salva no banco
+    salvar_cronograma_status(u, full_state)
+    st.toast("Progresso salvo!", icon="✅")
+
+def ler_blocos():
     try:
-        # Importamos os dados reais para garantir integridade
-        import aulas_medcof
-        dados_reais = getattr(aulas_medcof, 'DADOS_LIMPOS', [])
-        
-        # Lemos o arquivo para pegar os metadados (Blocos)
-        with open('aulas_medcof.py', 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            
-        current_block = "Geral"
-        data_index = 0
-        
-        # Regex para encontrar '# --- BLOCO X ---'
-        block_pattern = re.compile(r'#\s*-+\s*(BLOCO\s*.*)\s*-+')
-        
-        for line in lines:
-            line = line.strip()
-            
-            # 1. Detecta mudança de Bloco
-            match = block_pattern.search(line)
-            if match:
-                current_block = match.group(1).strip() # Ex: "BLOCO 1"
-            
-            # 2. Sincroniza com a lista de dados
-            # Se a linha parece uma tupla e ainda temos dados para mapear
-            if data_index < len(dados_reais):
-                aula_real, area_real = dados_reais[data_index]
-                
-                # Verifica se o nome da aula está nesta linha (confirmação frouxa)
-                # Usamos ' in ' para evitar problemas com aspas simples/duplas
-                if aula_real in line:
-                    items_mapeados.append({
-                        "Bloco": current_block,
-                        "Aula": aula_real,
-                        "Area": normalizar_area(area_real)
-                    })
-                    data_index += 1
-                    
-        return items_mapeados, dados_reais
-
-    except Exception as e:
-        print(f"Erro ao ler blocos: {e}")
-        # Retorna vazio em caso de erro para cair no fallback
-        return [], []
+        import aulas_medcof; dados = getattr(aulas_medcof, 'DADOS_LIMPOS', [])
+        with open('aulas_medcof.py', 'r', encoding='utf-8') as f: lines = f.readlines()
+        mapa, idx, curr = [], 0, "Geral"
+        for l in lines:
+            m = re.search(r'#\s*-+\s*(BLOCO\s*.*)\s*-+', l)
+            if m: curr = m.group(1).strip()
+            if idx < len(dados):
+                aula, area = dados[idx]
+                if aula in l:
+                    mapa.append({"Bloco": curr, "Aula": aula, "Area": normalizar_area(area)})
+                    idx += 1
+        return mapa
+    except: return []
 
 def render_cronograma(conn_ignored):
     st.header("🗂️ Cronograma Extensivo")
-    st.caption("Seu progresso é salvo automaticamente ao marcar os itens.")
-
+    st.caption("Gerencie seu progresso detalhado: Prioridade, Questões e Conclusão.")
+    
     u = st.session_state.username
     
-    # 1. Carregar dados com estrutura de Blocos
-    df_blocos = pd.DataFrame()
-    items_mapeados, dados_brutos = ler_blocos_do_arquivo()
+    # 1. Carregar Estrutura
+    mapa = ler_blocos()
+    if not mapa: st.warning("Dados não carregados."); return
+    df = pd.DataFrame(mapa)
     
-    # Fallback: Se não conseguir ler o arquivo, usa importação padrão
-    if not items_mapeados:
-        try:
-            import aulas_medcof
-            dados_brutos = getattr(aulas_medcof, 'DADOS_LIMPOS', [])
-            # Cria DataFrame sem blocos (tudo Geral)
-            df_blocos = pd.DataFrame(dados_brutos, columns=['Aula', 'Area'])
-            df_blocos['Bloco'] = 'Lista Completa'
-            df_blocos['Area'] = df_blocos['Area'].apply(normalizar_area)
-        except ImportError:
-            st.error("Arquivo aulas_medcof.py não encontrado.")
-            return
-    else:
-        df_blocos = pd.DataFrame(items_mapeados)
-
-    if df_blocos.empty:
-        st.warning("Lista de aulas vazia.")
-        return
-
-    # 2. Carregar estado salvo
+    # 2. Carregar Estado do Usuário (Rich Data)
+    # Formato: {'Aula': {'feito': T, 'prioridade': 'X', 'acertos': 10, 'total': 20}}
     estado_salvo = get_cronograma_status(u)
     
-    # Barra de Progresso Geral
-    total_aulas = len(df_blocos)
-    concluidas = sum(1 for k in estado_salvo if estado_salvo.get(k))
-    progresso = concluidas / total_aulas if total_aulas > 0 else 0
-    st.progress(progresso, text=f"Progresso Geral: {concluidas}/{total_aulas} ({progresso:.1%})")
+    # Barra de Progresso Global (Baseada em Checkbox 'Feito')
+    total_aulas = len(df)
+    concluidas = sum(1 for k, v in estado_salvo.items() if v.get('feito'))
+    prog_global = concluidas / total_aulas if total_aulas > 0 else 0
+    st.progress(prog_global, text=f"Progresso Geral: {concluidas}/{total_aulas} ({prog_global:.1%})")
+    
+    st.divider()
 
-    # 3. Renderizar por Blocos (Mantendo a ordem original)
-    # .unique() preserva a ordem de aparição no pandas
-    blocos = df_blocos['Bloco'].unique()
+    # 3. Renderização por Blocos
+    blocos = df['Bloco'].unique()
     
     for bloco in blocos:
-        # Filtra aulas deste bloco
-        df_b = df_blocos[df_blocos['Bloco'] == bloco]
-        aulas_bloco = df_b['Aula'].tolist()
+        aulas_bloco = df[df['Bloco'] == bloco]
         
-        # Conta concluidas neste bloco
-        concluidas_bloco = sum(1 for a in aulas_bloco if estado_salvo.get(a))
+        # Header do Bloco com Contagem
+        feitas_bloco = sum(1 for a in aulas_bloco['Aula'] if estado_salvo.get(a, {}).get('feito'))
         
-        # Expander do Bloco
-        with st.expander(f"📚 {bloco} ({concluidas_bloco}/{len(aulas_bloco)})"):
-            for idx, row in df_b.iterrows():
+        with st.expander(f"📚 {bloco} ({feitas_bloco}/{len(aulas_bloco)})", expanded=False):
+            # Cabeçalho da "Tabela"
+            c_h1, c_h2, c_h3, c_h4 = st.columns([0.5, 2, 1.5, 1])
+            c_h1.caption("✔")
+            c_h2.caption("Aula & Prioridade")
+            c_h3.caption("Questões (Ac/Tot)")
+            c_h4.caption("%")
+            
+            for _, row in aulas_bloco.iterrows():
                 aula = row['Aula']
-                area = row['Area']
-                is_checked = estado_salvo.get(aula, False)
+                dados_aula = estado_salvo.get(aula, {"feito": False, "prioridade": "Normal", "acertos": 0, "total": 0})
                 
-                # Layout: Checkbox + Badge da Área
-                col_check, col_badge = st.columns([0.8, 0.2])
+                # Layout da Linha
+                c1, c2, c3, c4 = st.columns([0.5, 2, 1.5, 1])
                 
-                with col_check:
-                    st.checkbox(
-                        aula, 
-                        value=is_checked, 
-                        key=f"chk_{aula}",
-                        on_change=auto_save_callback,
-                        args=(u, dados_brutos)
+                # Coluna 1: Checkbox (Feito)
+                c1.checkbox(
+                    " ", # Label vazio para alinhar
+                    value=dados_aula.get('feito', False),
+                    key=f"chk_{aula}",
+                    on_change=update_row_callback,
+                    args=(u, aula, estado_salvo),
+                    label_visibility="collapsed"
+                )
+                
+                # Coluna 2: Nome + Prioridade
+                with c2:
+                    st.markdown(f"**{aula}**")
+                    # Badge de cor para prioridade
+                    prio_atual = dados_aula.get('prioridade', 'Normal')
+                    idx_prio = PRIORIDADES.index(prio_atual) if prio_atual in PRIORIDADES else 0
+                    
+                    st.selectbox(
+                        "Prioridade", 
+                        PRIORIDADES, 
+                        index=idx_prio,
+                        key=f"prio_{aula}",
+                        on_change=update_row_callback,
+                        args=(u, aula, estado_salvo),
+                        label_visibility="collapsed"
                     )
-                with col_badge:
-                    # Pequena badge visual para a área
-                    st.caption(f"_{area}_")
+
+                # Coluna 3: Questões (Lado a Lado)
+                with c3:
+                    ca, ct = st.columns(2)
+                    ca.number_input("Ac", 0, 999, dados_aula.get('acertos', 0), key=f"ac_{aula}", on_change=update_row_callback, args=(u, aula, estado_salvo), label_visibility="collapsed")
+                    ct.number_input("Tot", 0, 999, dados_aula.get('total', 0), key=f"tt_{aula}", on_change=update_row_callback, args=(u, aula, estado_salvo), label_visibility="collapsed")
+
+                # Coluna 4: Percentual Visual
+                with c4:
+                    ac = dados_aula.get('acertos', 0)
+                    tt = dados_aula.get('total', 0)
+                    perc = ac / tt if tt > 0 else 0
+                    st.progress(perc)
+                    st.caption(f"{int(perc*100)}%")
+                
+                st.markdown("---")
