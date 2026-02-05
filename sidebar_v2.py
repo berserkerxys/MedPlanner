@@ -17,16 +17,10 @@ def render_sidebar():
     status, _ = get_status_gamer(u, nonce)
     prog = get_progresso_hoje(u, nonce)
     
-    # Valor do banco (fonte de verdade para o login inicial)
+    # 2. Inicialização do Slider de Meta
     meta_banco = int(status.get('meta_diaria', 50))
-    
-    # 2. Inicialização Inteligente do Estado
-    # Se a chave do slider não existe na sessão (ex: acabou de logar), cria com o valor do banco.
-    # Se já existe, MANTÉM o valor da sessão (respeitando a interação do usuário).
     if "sb_meta_slider" not in st.session_state:
         st.session_state.sb_meta_slider = meta_banco
-
-    # (Removida a lógica agressiva que forçava a atualização e causava o "pulo" para 50)
 
     with st.sidebar:
         # --- Resumo Compacto ---
@@ -34,9 +28,8 @@ def render_sidebar():
         st.caption(f"{status['titulo']} (Nv. {status['nivel']})")
         
         # --- Lógica Visual (Barra de Progresso) ---
-        # Usa o valor da sessão para que a barra reaja instantaneamente ao slider
-        meta_atual = st.session_state.sb_meta_slider
-        perc = min(prog / meta_atual, 1.0) if meta_atual > 0 else 0
+        meta_atual = st.session_state.sb_meta_slider if st.session_state.sb_meta_slider > 0 else 1
+        perc = min(prog / meta_atual, 1.0)
         
         st.progress(perc, text=f"Hoje: {prog}/{meta_atual}")
         
@@ -44,31 +37,26 @@ def render_sidebar():
         
         # --- Meta Diária (Slider) ---
         def on_meta_change():
-            # Salva no banco apenas quando o usuário interage
             novo_valor = st.session_state.sb_meta_slider
             update_meta_diaria(u, novo_valor)
-            
-            # Sincroniza com a variável do perfil para manter consistência entre abas
             if "pf_meta_slider" in st.session_state:
                 st.session_state.pf_meta_slider = novo_valor
-                
             st.toast(f"Meta definida: {novo_valor}", icon="🎯")
 
         st.markdown("### 🎯 Meta Diária")
-        
         st.slider(
             "Ajuste seu alvo:",
             min_value=10,
             max_value=200,
             step=5,
-            key="sb_meta_slider",     # A chave mantém o estado automaticamente
-            on_change=on_meta_change, # Aciona o salvamento no banco
+            key="sb_meta_slider",
+            on_change=on_meta_change,
             label_visibility="collapsed"
         )
         
         st.divider()
         
-        # --- Registro Rápido ---
+        # --- Registro Rápido (Com Diferenciação Pré/Pós) ---
         st.markdown("### ⚡ Registro Rápido")
         
         tab_a, tab_s = st.tabs(["Aula", "Simulado"])
@@ -76,13 +64,23 @@ def render_sidebar():
         with tab_a:
             lista = get_lista_assuntos_nativa()
             assunto = st.selectbox("Tema:", lista, index=None, label_visibility="collapsed", placeholder="Tema...")
+            
+            # NOVO: Diferenciação de Fase de Estudo
+            tipo_estudo = st.radio(
+                "Fase do Estudo:",
+                ["Pre-Aula", "Pos-Aula"],
+                horizontal=True,
+                help="Pré-Aula define a meta da Pós. Pós-Aula define a revisão futura."
+            )
+            
             c1, c2 = st.columns(2)
             ac = c1.number_input("Acertos", 0, 300, 0, key="sb_ac")
             tot = c2.number_input("Total", 1, 300, 10, key="sb_tot")
             
             if st.button("✅ Salvar", use_container_width=True, key="btn_sb"):
                 if assunto:
-                    msg = registrar_estudo(u, assunto, ac, tot)
+                    # Envia o tipo_estudo para o banco processar a lógica de desempenho
+                    msg = registrar_estudo(u, assunto, ac, tot, tipo_estudo=tipo_estudo)
                     st.success(msg)
                     time.sleep(0.5)
                     st.rerun()
@@ -118,8 +116,6 @@ def render_sidebar():
         
         if st.button("🚪 Sair (Logout)", use_container_width=True):
             st.session_state.logado = False
-            # Limpa sessão para garantir que o próximo login carregue dados frescos do banco
-            keys_to_clear = ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]
-            for k in keys_to_clear:
+            for k in ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]:
                 if k in st.session_state: del st.session_state[k]
             st.rerun()
