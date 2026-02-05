@@ -1,136 +1,197 @@
 import streamlit as st
 import pandas as pd
 import re
+import os
 from database import get_cronograma_status, salvar_cronograma_status, normalizar_area
 
-# Opções de Prioridade
-PRIORIDADES = ["Normal", "Diamante", "Ouro", "Prata", "Verde", "Vermelho"]
+# Prioridades do HTML (Cores -> Nomes)
+MAPA_PRIORIDADES = {
+    "red": "Vermelho",      # Alta Prioridade / Atrasado
+    "orange": "Laranja",    # Atenção
+    "yellow": "Amarelo",    # Médio
+    "green": "Verde",       # Ok / Fácil
+    "blue": "Azul",         # Complementar
+    "purple": "Diamante",   # Muito Importante (Ex: Reta Final)
+    "gray": "Cinza"         # Opcional
+}
+
+PRIORIDADES_VISUAIS = {
+    "Diamante": "💎 Diamante",
+    "Vermelho": "🔴 Vermelho",
+    "Laranja": "🟠 Laranja",
+    "Amarelo": "🟡 Amarelo",
+    "Verde": "🟢 Verde",
+    "Azul": "🔵 Azul",
+    "Normal": "⚪ Normal"
+}
+
+def importar_prioridades_html():
+    """
+    Lê o ficheiro HTML enviado e extrai: {Nome da Aula: Prioridade}
+    """
+    mapa_prioridades = {}
+    try:
+        # Tenta encontrar o arquivo HTML no diretório
+        arquivos = [f for f in os.listdir('.') if f.endswith('.html') and 'MEDCOF' in f]
+        if not arquivos:
+            return {}
+            
+        with open(arquivos[0], 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        # Regex para extrair linhas da tabela do Notion/HTML exportado
+        # Procura: cor da prioridade ... título da aula
+        # Ex: <span class="...color-red">Vermelho</span> ... <a ...>Aula X</a>
+        
+        # Padrão 1: Cor e depois Título
+        padrao = re.compile(r'select-value-color-(\w+)">([^<]+)</span>.*?<td class="cell-title"><a href="[^"]+">([^<]+)</a>', re.DOTALL)
+        matches = padrao.findall(content)
+        
+        for cor_ingles, nome_cor, titulo_aula in matches:
+            # Limpeza do título
+            titulo_limpo = titulo_aula.strip()
+            # Mapeia cor inglês/português para nossa lista interna
+            prio = MAPA_PRIORIDADES.get(cor_ingles, "Normal")
+            
+            # Ajuste fino: Se o texto for "Diamante", usa Diamante independente da cor
+            if "Diamante" in nome_cor: prio = "Diamante"
+            
+            mapa_prioridades[titulo_limpo] = prio
+            
+    except Exception as e:
+        print(f"Erro ao importar HTML: {e}")
+        
+    return mapa_prioridades
 
 def update_row_callback(u, aula_nome, full_state):
-    """
-    Callback executado ao alterar qualquer widget de uma linha.
-    Atualiza o estado global e salva no banco.
-    """
-    # Recupera valores atuais dos widgets daquela linha
     check = st.session_state.get(f"chk_{aula_nome}", False)
-    prio = st.session_state.get(f"prio_{aula_nome}", "Normal")
-    ac = st.session_state.get(f"ac_{aula_nome}", 0)
-    tt = st.session_state.get(f"tt_{aula_nome}", 0)
+    # Tenta pegar a prioridade do selectbox, senão mantém a atual
+    prio = st.session_state.get(f"prio_{aula_nome}", full_state.get(aula_nome, {}).get("prioridade", "Normal"))
     
-    # Atualiza o dicionário mestre
+    # Acertos e Total vêm da sessão ou do estado anterior (se não mudou)
+    # Nota: Como a sidebar atualiza o banco, precisamos garantir que não estamos sobrescrevendo com zero
+    # Se o widget numérico não estiver na tela (ex: fechado), usamos o valor do banco
+    ac = st.session_state.get(f"ac_{aula_nome}", full_state.get(aula_nome, {}).get("acertos", 0))
+    tt = st.session_state.get(f"tt_{aula_nome}", full_state.get(aula_nome, {}).get("total", 0))
+    
     full_state[aula_nome] = {
         "feito": check,
         "prioridade": prio,
         "acertos": ac,
         "total": tt
     }
-    
-    # Salva no banco
     salvar_cronograma_status(u, full_state)
-    st.toast("Progresso salvo!", icon="✅")
+    st.toast("Atualizado!", icon="✅")
 
-def ler_blocos():
+def ler_blocos_e_prioridades():
+    # 1. Carrega estrutura do arquivo Python
     try:
         import aulas_medcof; dados = getattr(aulas_medcof, 'DADOS_LIMPOS', [])
         with open('aulas_medcof.py', 'r', encoding='utf-8') as f: lines = f.readlines()
-        mapa, idx, curr = [], 0, "Geral"
-        for l in lines:
-            m = re.search(r'#\s*-+\s*(BLOCO\s*.*)\s*-+', l)
-            if m: curr = m.group(1).strip()
-            if idx < len(dados):
-                aula, area = dados[idx]
-                if aula in l:
-                    mapa.append({"Bloco": curr, "Aula": aula, "Area": normalizar_area(area)})
-                    idx += 1
-        return mapa
-    except: return []
+    except: return [], {}, []
+
+    # 2. Carrega prioridades do HTML (Importação Única)
+    prio_html = importar_prioridades_html()
+    
+    mapa, idx, curr = [], 0, "Geral"
+    for l in lines:
+        m = re.search(r'#\s*-+\s*(BLOCO\s*.*)\s*-+', l)
+        if m: curr = m.group(1).strip()
+        if idx < len(dados):
+            item = dados[idx]
+            aula = item[0] if isinstance(item, tuple) else item
+            area = item[1] if isinstance(item, tuple) and len(item)>1 else "Geral"
+            
+            if aula in l:
+                # Tenta casar o nome da aula com o do HTML (pode precisar de fuzzy match)
+                # Aqui usamos match exato ou "contém"
+                prio_detectada = "Normal"
+                
+                # Procura no dicionário do HTML
+                for k, v in prio_html.items():
+                    if k in aula or aula in k: # Match flexível
+                        prio_detectada = v
+                        break
+                
+                mapa.append({
+                    "Bloco": curr, 
+                    "Aula": aula, 
+                    "Area": normalizar_area(area),
+                    "Prioridade_HTML": prio_detectada
+                })
+                idx += 1
+    return mapa, dados, prio_html
 
 def render_cronograma(conn_ignored):
-    st.header("🗂️ Cronograma Extensivo")
-    st.caption("Gerencie seu progresso detalhado: Prioridade, Questões e Conclusão.")
+    st.header("🗂️ Cronograma & Prioridades")
+    
+    import os
+    if os.path.exists("MEDCOF 2026 2fd60e4aba71806496a9d52180699c35.html"):
+        st.success("Arquivo de prioridades (HTML) detetado e sincronizado.", icon="🔗")
     
     u = st.session_state.username
+    mapa, bruto, prios_externas = ler_blocos_e_prioridades()
     
-    # 1. Carregar Estrutura
-    mapa = ler_blocos()
-    if not mapa: st.warning("Dados não carregados."); return
+    if not mapa: st.warning("Sem dados."); return
     df = pd.DataFrame(mapa)
     
-    # 2. Carregar Estado do Usuário (Rich Data)
-    # Formato: {'Aula': {'feito': T, 'prioridade': 'X', 'acertos': 10, 'total': 20}}
-    estado_salvo = get_cronograma_status(u)
+    # Carrega estado do banco
+    estado = get_cronograma_status(u)
     
-    # Barra de Progresso Global (Baseada em Checkbox 'Feito')
-    total_aulas = len(df)
-    concluidas = sum(1 for k, v in estado_salvo.items() if v.get('feito'))
-    prog_global = concluidas / total_aulas if total_aulas > 0 else 0
-    st.progress(prog_global, text=f"Progresso Geral: {concluidas}/{total_aulas} ({prog_global:.1%})")
+    # Sync Inicial: Se o HTML tem prioridade e o Banco ainda é 'Normal', atualiza o banco
+    mudou_algo = False
+    for row in mapa:
+        aula = row['Aula']
+        p_html = row['Prioridade_HTML']
+        
+        # Dados atuais no banco
+        d_banco = estado.get(aula, {"feito": False, "prioridade": "Normal", "acertos": 0, "total": 0})
+        
+        # Se a prioridade no banco for Normal, mas o HTML diz outra coisa, atualizamos
+        if d_banco.get("prioridade") == "Normal" and p_html != "Normal":
+            d_banco["prioridade"] = p_html
+            estado[aula] = d_banco
+            mudou_algo = True
+            
+    if mudou_algo:
+        salvar_cronograma_status(u, estado)
+        # st.rerun() # Opcional: Recarregar para mostrar já atualizado
+
+    # KPIs
+    concluidas = sum(1 for k, v in estado.items() if v.get('feito'))
+    total_q = sum(v.get('total', 0) for v in estado.values())
+    st.progress(concluidas/len(df), text=f"Progresso Temas: {concluidas}/{len(df)}")
+    st.caption(f"Questões Totais no Cronograma: **{total_q}**")
     
     st.divider()
 
-    # 3. Renderização por Blocos
     blocos = df['Bloco'].unique()
-    
-    for bloco in blocos:
-        aulas_bloco = df[df['Bloco'] == bloco]
+    for bl in blocos:
+        aulas = df[df['Bloco']==bl]
+        feitas = sum(1 for a in aulas['Aula'] if estado.get(a, {}).get('feito'))
         
-        # Header do Bloco com Contagem
-        feitas_bloco = sum(1 for a in aulas_bloco['Aula'] if estado_salvo.get(a, {}).get('feito'))
-        
-        with st.expander(f"📚 {bloco} ({feitas_bloco}/{len(aulas_bloco)})", expanded=False):
-            # Cabeçalho da "Tabela"
-            c_h1, c_h2, c_h3, c_h4 = st.columns([0.5, 2, 1.5, 1])
-            c_h1.caption("✔")
-            c_h2.caption("Aula & Prioridade")
-            c_h3.caption("Questões (Ac/Tot)")
-            c_h4.caption("%")
-            
-            for _, row in aulas_bloco.iterrows():
-                aula = row['Aula']
-                dados_aula = estado_salvo.get(aula, {"feito": False, "prioridade": "Normal", "acertos": 0, "total": 0})
+        with st.expander(f"{bl} ({feitas}/{len(aulas)})"):
+            for _, r in aulas.iterrows():
+                aula = r['Aula']
+                d = estado.get(aula, {"feito": False, "prioridade": "Normal", "acertos": 0, "total": 0})
                 
-                # Layout da Linha
-                c1, c2, c3, c4 = st.columns([0.5, 2, 1.5, 1])
+                c1, c2, c3 = st.columns([0.1, 0.6, 0.3])
                 
-                # Coluna 1: Checkbox (Feito)
-                c1.checkbox(
-                    " ", # Label vazio para alinhar
-                    value=dados_aula.get('feito', False),
-                    key=f"chk_{aula}",
-                    on_change=update_row_callback,
-                    args=(u, aula, estado_salvo),
-                    label_visibility="collapsed"
-                )
+                # 1. Check + Nome
+                c1.checkbox(" ", value=d.get('feito', False), key=f"chk_{aula}", on_change=update_row_callback, args=(u, aula, estado), label_visibility="collapsed")
                 
-                # Coluna 2: Nome + Prioridade
+                # 2. Detalhes (Nome, Area, Prioridade)
                 with c2:
-                    st.markdown(f"**{aula}**")
-                    # Badge de cor para prioridade
-                    prio_atual = dados_aula.get('prioridade', 'Normal')
-                    idx_prio = PRIORIDADES.index(prio_atual) if prio_atual in PRIORIDADES else 0
+                    prio_key = d.get('prioridade', 'Normal')
+                    emoji_prio = PRIORIDADES_VISUAIS.get(prio_key, "⚪")[0] # Pega só o emoji
                     
-                    st.selectbox(
-                        "Prioridade", 
-                        PRIORIDADES, 
-                        index=idx_prio,
-                        key=f"prio_{aula}",
-                        on_change=update_row_callback,
-                        args=(u, aula, estado_salvo),
-                        label_visibility="collapsed"
-                    )
+                    st.markdown(f"**{aula}**")
+                    st.caption(f"{emoji_prio} {prio_key} • {r['Area']}")
 
-                # Coluna 3: Questões (Lado a Lado)
+                # 3. Questões (Visualização)
                 with c3:
-                    ca, ct = st.columns(2)
-                    ca.number_input("Ac", 0, 999, dados_aula.get('acertos', 0), key=f"ac_{aula}", on_change=update_row_callback, args=(u, aula, estado_salvo), label_visibility="collapsed")
-                    ct.number_input("Tot", 0, 999, dados_aula.get('total', 0), key=f"tt_{aula}", on_change=update_row_callback, args=(u, aula, estado_salvo), label_visibility="collapsed")
-
-                # Coluna 4: Percentual Visual
-                with c4:
-                    ac = dados_aula.get('acertos', 0)
-                    tt = dados_aula.get('total', 0)
-                    perc = ac / tt if tt > 0 else 0
-                    st.progress(perc)
-                    st.caption(f"{int(perc*100)}%")
-                
-                st.markdown("---")
+                    ac = d.get('acertos', 0)
+                    tot = d.get('total', 0)
+                    perc = int(ac/tot*100) if tot > 0 else 0
+                    
+                    st.progress(perc/100, text=f"{ac}/{tot} ({perc}%)")
