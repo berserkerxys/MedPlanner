@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
 import re
+from datetime import datetime, timedelta
 from database import (
     get_cronograma_status, 
     salvar_cronograma_status, 
     normalizar_area, 
     calcular_meta_questoes,
-    resetar_revisoes_aula
+    resetar_revisoes_aula,
+    registrar_estudo # Necessário para agendar a revisão no histórico/agenda
 )
 
 # Configuração Visual
@@ -30,6 +32,21 @@ def reset_callback(u, aula_nome):
     if resetar_revisoes_aula(u, aula_nome):
         st.toast(f"Ciclo de '{aula_nome}' reiniciado!", icon="🔄")
         # st.rerun() 
+
+def agendar_revisao_callback(u, aula_nome, acertos_total, total_total):
+    """
+    Marca o estudo como encerrado e agenda a revisão na agenda.
+    """
+    # 1. Registra no histórico como um estudo consolidado, o que dispara o agendamento de revisão (srs=True)
+    # Usamos "Pos-Aula" para garantir que o sistema entenda como estudo completo
+    msg = registrar_estudo(u, aula_nome, acertos_total, total_total, tipo_estudo="Pos-Aula", srs=True)
+    
+    if "salvo" in msg or "Salvo" in msg:
+        st.toast(f"Revisão agendada para {aula_nome}!", icon="📅")
+        # Opcional: Marcar visualmente no cronograma que a revisão está agendada
+        # Poderíamos atualizar o estado local se quiséssemos um indicador visual persistente aqui
+    else:
+        st.error(f"Erro ao agendar: {msg}")
 
 def ler_dados_nativos():
     mapa = []
@@ -80,12 +97,13 @@ def render_cronograma(conn_ignored):
         
         with st.expander(f"{bloco} ({feitas}/{len(df_bloco)})", expanded=False):
             # Cabeçalho da tabela interna
-            c_h1, c_h2, c_h3, c_h4, c_h5 = st.columns([0.05, 0.2, 0.35, 0.2, 0.2])
+            c_h1, c_h2, c_h3, c_h4, c_h5, c_h6 = st.columns([0.05, 0.15, 0.30, 0.15, 0.15, 0.20])
             c_h1.caption("✔")
             c_h2.caption("Prioridade")
             c_h3.caption("Tema")
             c_h4.caption("Pré-Aula")
             c_h5.caption("Pós-Aula")
+            c_h6.caption("Desempenho Geral & Ação")
 
             for _, row in df_bloco.iterrows():
                 aula = row['Aula']
@@ -97,7 +115,7 @@ def render_cronograma(conn_ignored):
                 meta_pre, meta_pos = calcular_meta_questoes(prio, desempenho_ant)
                 
                 # Layout
-                c1, c2, c3, c4, c5 = st.columns([0.05, 0.2, 0.35, 0.2, 0.2])
+                c1, c2, c3, c4, c5, c6 = st.columns([0.05, 0.15, 0.30, 0.15, 0.15, 0.20])
                 
                 # 1. Checkbox
                 c1.checkbox(" ", value=d.get('feito', False), key=f"chk_{aula}", on_change=update_row_callback, args=(u, aula, estado), label_visibility="collapsed")
@@ -120,14 +138,13 @@ def render_cronograma(conn_ignored):
                     
                     # Barra visual relativa à META
                     prog_pre = min(tt_pre / meta_pre, 1.0) if meta_pre > 0 else 0
-                    cor_barra = "green" if tt_pre >= meta_pre else "blue"
                     
                     if tt_pre > 0:
-                        st.progress(prog_pre, text=f"{ac_pre}/{tt_pre} (Meta {meta_pre})")
+                        st.progress(prog_pre, text=f"{ac_pre}/{tt_pre}")
                     else:
                         st.caption(f"0/{meta_pre}")
 
-                # 5. Contador Pós-Aula + Reset
+                # 5. Contador Pós-Aula
                 with c5:
                     ac_pos = d.get('acertos_pos', 0)
                     tt_pos = d.get('total_pos', 0)
@@ -135,14 +152,33 @@ def render_cronograma(conn_ignored):
                     prog_pos = min(tt_pos / meta_pos, 1.0) if meta_pos > 0 else 0
                     
                     if tt_pos > 0:
-                        st.progress(prog_pos, text=f"{ac_pos}/{tt_pos} (Meta {meta_pos})")
+                        st.progress(prog_pos, text=f"{ac_pos}/{tt_pos}")
                     else:
                         st.caption(f"0/{meta_pos}")
+                
+                # 6. Desempenho Geral e Ação
+                with c6:
+                    ac_total = ac_pre + ac_pos
+                    tt_total = tt_pre + tt_pos
                     
-                    # Botão Reset discreto
-                    if tt_pos > 0 or d.get('feito', False):
-                        if st.button("↺", key=f"rst_{aula}", help="Reiniciar ciclo de revisões"):
-                            reset_callback(u, aula)
-                            st.rerun()
+                    if tt_total > 0:
+                        perc_geral = int(ac_total / tt_total * 100)
+                        # Barra de desempenho (não de meta, mas de acertos)
+                        st.progress(ac_total/tt_total, text=f"Total: {perc_geral}%")
+                        
+                        # Botões de Ação
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            # Botão Agendar Revisão
+                            if st.button("📅", key=f"agd_{aula}", help="Agendar Revisão (Marca como Encerrado)"):
+                                agendar_revisao_callback(u, aula, ac_total, tt_total)
+                        
+                        with col_btn2:
+                            # Botão Reset
+                            if st.button("↺", key=f"rst_{aula}", help="Reiniciar ciclo"):
+                                reset_callback(u, aula)
+                                st.rerun()
+                    else:
+                        st.caption("—")
 
                 st.markdown("<hr style='margin:2px 0; border-top: 1px solid #f0f2f6;'>", unsafe_allow_html=True)
