@@ -6,9 +6,9 @@ from database import get_cronograma_status, salvar_cronograma_status, normalizar
 # --- CONFIGURAÇÃO VISUAL ---
 PRIORIDADES_STYLE = {
     "Diamante": {"icon": "💎", "color": "#9C27B0", "bg": "#F3E5F5", "label": "Diamante"}, # Roxo
-    "Vermelho": {"icon": "🔴", "color": "#D32F2F", "bg": "#FFEBEE", "label": "Alta"},     # Vermelho
+    "Vermelho": {"icon": "🔴", "color": "#D32F2F", "bg": "#FFEBEE", "label": "Baixa"},     # Vermelho
     "Amarelo":  {"icon": "🟡", "color": "#FBC02D", "bg": "#FFFDE7", "label": "Média"},    # Amarelo
-    "Verde":    {"icon": "🟢", "color": "#388E3C", "bg": "#E8F5E9", "label": "Baixa"},    # Verde
+    "Verde":    {"icon": "🟢", "color": "#388E3C", "bg": "#E8F5E9", "label": "Alta"},    # Verde
     "Normal":   {"icon": "⚪", "color": "#757575", "bg": "#F5F5F5", "label": "Normal"}
 }
 
