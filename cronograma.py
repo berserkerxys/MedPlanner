@@ -6,9 +6,9 @@ from database import get_cronograma_status, salvar_cronograma_status, normalizar
 # --- CONFIGURAÇÃO VISUAL ---
 PRIORIDADES_STYLE = {
     "Diamante": {"icon": "💎", "color": "#9C27B0", "bg": "#F3E5F5", "label": "Diamante"}, # Roxo
-    "Vermelho": {"icon": "🔴", "color": "#D32F2F", "bg": "#FFEBEE", "label": "Baixa"},     # Vermelho
-    "Amarelo":  {"icon": "🟡", "color": "#FBC02D", "bg": "#FFFDE7", "label": "Média"},    # Amarelo
-    "Verde":    {"icon": "🟢", "color": "#388E3C", "bg": "#E8F5E9", "label": "Alta"},    # Verde
+    "Vermelho": {"icon": "🔴", "color": "#D32F2F", "bg": "#FFEBEE", "label": "Vermelho"},     # Vermelho
+    "Amarelo":  {"icon": "🟡", "color": "#FBC02D", "bg": "#FFFDE7", "label": "Amarela"},    # Amarelo
+    "Verde":    {"icon": "🟢", "color": "#388E3C", "bg": "#E8F5E9", "label": "Verde"},    # Verde
     "Normal":   {"icon": "⚪", "color": "#757575", "bg": "#F5F5F5", "label": "Normal"}
 }
 
@@ -105,7 +105,7 @@ def render_cronograma(conn_ignored):
     c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
     c_kpi1.metric("Questões Totais", total_questoes)
     c_kpi2.metric("Pendentes", total_aulas - concluidas)
-    c_kpi3.caption("Priorize os temas Diamante 💎")
+    c_kpi3.caption("Priorize os temas 💎 Diamante  | 🟢 após diamante | 🟡 após verde | 🔴 após amarela")
     
     st.divider()
 
