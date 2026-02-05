@@ -2,32 +2,46 @@ import streamlit as st
 import pandas as pd
 import re
 import os
+import unicodedata
 from database import get_cronograma_status, salvar_cronograma_status, normalizar_area
 
-# Prioridades do HTML (Cores -> Nomes)
+# --- CONFIGURAÇÃO DE PRIORIDADES (ESCALA CORRETA) ---
+# Ordem: Vermelho (Base) -> Amarelo -> Verde -> Diamante (Topo)
 MAPA_PRIORIDADES = {
     "red": "Vermelho",      # Alta Prioridade / Atrasado
-    "orange": "Laranja",    # Atenção
     "yellow": "Amarelo",    # Médio
     "green": "Verde",       # Ok / Fácil
-    "blue": "Azul",         # Complementar
-    "purple": "Diamante",   # Muito Importante (Ex: Reta Final)
-    "gray": "Cinza"         # Opcional
+    "purple": "Diamante",   # Muito Importante (Reta Final)
+    # Mapeamentos de fallback para cores não oficiais
+    "orange": "Vermelho",   # Laranja vira Vermelho (Alta prioridade)
+    "blue": "Verde",        # Azul vira Verde (Baixa prioridade)
+    "gray": "Normal"
 }
 
 PRIORIDADES_VISUAIS = {
     "Diamante": "💎 Diamante",
     "Vermelho": "🔴 Vermelho",
-    "Laranja": "🟠 Laranja",
     "Amarelo": "🟡 Amarelo",
     "Verde": "🟢 Verde",
-    "Azul": "🔵 Azul",
     "Normal": "⚪ Normal"
 }
 
+def normalizar_texto_match(texto):
+    """
+    Remove acentos, converte para minúsculo e remove caracteres não alfanuméricos
+    para comparação robusta de strings.
+    Ex: "Anemias Hipoproliferativas I" -> "anemiashipoproliferativasi"
+    """
+    if not isinstance(texto, str): return ""
+    # Normaliza unicode (remove acentos)
+    nfkd = unicodedata.normalize('NFKD', texto)
+    sem_acento = u"".join([c for c in nfkd if not unicodedata.combining(c)])
+    # Mantém apenas letras e números, tudo minúsculo
+    return re.sub(r'[^a-z0-9]', '', sem_acento.lower())
+
 def importar_prioridades_html():
     """
-    Lê o ficheiro HTML enviado e extrai: {Nome da Aula: Prioridade}
+    Lê o ficheiro HTML enviado e extrai: {Nome Normalizado da Aula: Prioridade}
     """
     mapa_prioridades = {}
     try:
@@ -39,25 +53,30 @@ def importar_prioridades_html():
         with open(arquivos[0], 'r', encoding='utf-8') as f:
             content = f.read()
             
-        # Regex para extrair linhas da tabela do Notion/HTML exportado
-        # Procura: cor da prioridade ... título da aula
-        # Ex: <span class="...color-red">Vermelho</span> ... <a ...>Aula X</a>
-        
-        # Padrão 1: Cor e depois Título
+        # Regex ajustado para capturar a estrutura da tabela do Notion
+        # Procura: <span class="...color-COR">TEXTO</span> ... <a ...>NOME DA AULA</a>
+        # O re.DOTALL permite que o .*? atravesse quebras de linha
         padrao = re.compile(r'select-value-color-(\w+)">([^<]+)</span>.*?<td class="cell-title"><a href="[^"]+">([^<]+)</a>', re.DOTALL)
         matches = padrao.findall(content)
         
-        for cor_ingles, nome_cor, titulo_aula in matches:
-            # Limpeza do título
-            titulo_limpo = titulo_aula.strip()
-            # Mapeia cor inglês/português para nossa lista interna
-            prio = MAPA_PRIORIDADES.get(cor_ingles, "Normal")
+        for cor_ingles, nome_cor_html, titulo_aula_html in matches:
+            # Normaliza a chave para garantir o match
+            chave_normalizada = normalizar_texto_match(titulo_aula_html)
             
-            # Ajuste fino: Se o texto for "Diamante", usa Diamante independente da cor
-            if "Diamante" in nome_cor: prio = "Diamante"
+            # Determina a prioridade
+            prio = "Normal"
             
-            mapa_prioridades[titulo_limpo] = prio
+            # 1. Checa explicitamente se é Diamante pelo texto da etiqueta
+            if "Diamante" in nome_cor_html or "purple" in cor_ingles:
+                prio = "Diamante"
+            # 2. Senão, usa o mapeamento de cores
+            else:
+                prio = MAPA_PRIORIDADES.get(cor_ingles, "Normal")
             
+            # Salva no mapa usando a chave 'limpa'
+            if chave_normalizada:
+                mapa_prioridades[chave_normalizada] = prio
+                
     except Exception as e:
         print(f"Erro ao importar HTML: {e}")
         
@@ -68,9 +87,6 @@ def update_row_callback(u, aula_nome, full_state):
     # Tenta pegar a prioridade do selectbox, senão mantém a atual
     prio = st.session_state.get(f"prio_{aula_nome}", full_state.get(aula_nome, {}).get("prioridade", "Normal"))
     
-    # Acertos e Total vêm da sessão ou do estado anterior (se não mudou)
-    # Nota: Como a sidebar atualiza o banco, precisamos garantir que não estamos sobrescrevendo com zero
-    # Se o widget numérico não estiver na tela (ex: fechado), usamos o valor do banco
     ac = st.session_state.get(f"ac_{aula_nome}", full_state.get(aula_nome, {}).get("acertos", 0))
     tt = st.session_state.get(f"tt_{aula_nome}", full_state.get(aula_nome, {}).get("total", 0))
     
@@ -88,10 +104,10 @@ def ler_blocos_e_prioridades():
     try:
         import aulas_medcof; dados = getattr(aulas_medcof, 'DADOS_LIMPOS', [])
         with open('aulas_medcof.py', 'r', encoding='utf-8') as f: lines = f.readlines()
-    except: return [], {}, []
+    except: return [], {}, {}
 
-    # 2. Carrega prioridades do HTML (Importação Única)
-    prio_html = importar_prioridades_html()
+    # 2. Carrega prioridades do HTML
+    prio_html_map = importar_prioridades_html()
     
     mapa, idx, curr = [], 0, "Geral"
     for l in lines:
@@ -103,16 +119,16 @@ def ler_blocos_e_prioridades():
             area = item[1] if isinstance(item, tuple) and len(item)>1 else "Geral"
             
             if aula in l:
-                # Tenta casar o nome da aula com o do HTML (pode precisar de fuzzy match)
-                # Aqui usamos match exato ou "contém"
-                prio_detectada = "Normal"
+                # Normaliza o nome da aula vindo do Python para buscar no mapa do HTML
+                chave_busca = normalizar_texto_match(aula)
                 
-                # Procura no dicionário do HTML
-                for k, v in prio_html.items():
-                    if k in aula or aula in k: # Match flexível
-                        prio_detectada = v
-                        break
+                # Busca exata pela chave normalizada
+                prio_detectada = prio_html_map.get(chave_busca, "Normal")
                 
+                # Debug: Se for Anemia Hipoproliferativa I e não achou, força log (opcional)
+                # if "anemiashipoproliferativasi" in chave_busca:
+                #     print(f"DEBUG: {aula} -> {prio_detectada}")
+
                 mapa.append({
                     "Bloco": curr, 
                     "Aula": aula, 
@@ -120,14 +136,14 @@ def ler_blocos_e_prioridades():
                     "Prioridade_HTML": prio_detectada
                 })
                 idx += 1
-    return mapa, dados, prio_html
+    return mapa, dados, prio_html_map
 
 def render_cronograma(conn_ignored):
     st.header("🗂️ Cronograma & Prioridades")
     
     import os
     if os.path.exists("MEDCOF 2026 2fd60e4aba71806496a9d52180699c35.html"):
-        st.success("Arquivo de prioridades (HTML) detetado e sincronizado.", icon="🔗")
+        st.success("Prioridades sincronizadas com o plano oficial.", icon="💎")
     
     u = st.session_state.username
     mapa, bruto, prios_externas = ler_blocos_e_prioridades()
@@ -147,7 +163,8 @@ def render_cronograma(conn_ignored):
         # Dados atuais no banco
         d_banco = estado.get(aula, {"feito": False, "prioridade": "Normal", "acertos": 0, "total": 0})
         
-        # Se a prioridade no banco for Normal, mas o HTML diz outra coisa, atualizamos
+        # Só atualiza se o banco estiver "virgem" (Normal) e o HTML tiver algo relevante
+        # E garante que não sobrescrevemos uma definição manual do usuário se ele já mudou
         if d_banco.get("prioridade") == "Normal" and p_html != "Normal":
             d_banco["prioridade"] = p_html
             estado[aula] = d_banco
@@ -170,7 +187,7 @@ def render_cronograma(conn_ignored):
         aulas = df[df['Bloco']==bl]
         feitas = sum(1 for a in aulas['Aula'] if estado.get(a, {}).get('feito'))
         
-        with st.expander(f"{bl} ({feitas}/{len(aulas)})"):
+        with st.expander(f"{bl} ({feitas}/{len(aulas)})", expanded=False):
             for _, r in aulas.iterrows():
                 aula = r['Aula']
                 d = estado.get(aula, {"feito": False, "prioridade": "Normal", "acertos": 0, "total": 0})
@@ -183,10 +200,18 @@ def render_cronograma(conn_ignored):
                 # 2. Detalhes (Nome, Area, Prioridade)
                 with c2:
                     prio_key = d.get('prioridade', 'Normal')
-                    emoji_prio = PRIORIDADES_VISUAIS.get(prio_key, "⚪")[0] # Pega só o emoji
+                    # Garante que temos um emoji mesmo se a chave for estranha
+                    emoji_prio = PRIORIDADES_VISUAIS.get(prio_key, PRIORIDADES_VISUAIS["Normal"])[0]
                     
                     st.markdown(f"**{aula}**")
-                    st.caption(f"{emoji_prio} {prio_key} • {r['Area']}")
+                    # Badge colorido manualmente para destaque
+                    cor_texto = "gray"
+                    if prio_key == "Diamante": cor_texto = "purple"
+                    elif prio_key == "Vermelho": cor_texto = "red"
+                    elif prio_key == "Verde": cor_texto = "green"
+                    elif prio_key == "Amarelo": cor_texto = "#DAA520" # Goldenrod
+                    
+                    st.markdown(f"<span style='color:{cor_texto}'>{emoji_prio} {prio_key}</span> • <small>{r['Area']}</small>", unsafe_allow_html=True)
 
                 # 3. Questões (Visualização)
                 with c3:
