@@ -92,10 +92,20 @@ def render_cronograma(conn_ignored):
     # KPIs Calculados Dinamicamente
     concluidas = sum(1 for k, v in estado.items() if v.get('feito'))
     total_aulas = len(df)
-    total_q = sum(v.get('total_pos', 0) + v.get('total_pre', 0) for v in estado.values())
+    
+    # Soma total de questões realizadas (Pré + Pós) em todos os temas
+    total_q = sum(
+        (v.get('total_pos', 0) or 0) + (v.get('total_pre', 0) or 0) 
+        for v in estado.values()
+    )
     
     # Barra de Progresso Global Dinâmica
-    progresso_percentual = concluidas / total_aulas if total_aulas > 0 else 0
+    # Garante que não haja divisão por zero
+    if total_aulas > 0:
+        progresso_percentual = min(concluidas / total_aulas, 1.0)
+    else:
+        progresso_percentual = 0.0
+        
     st.progress(progresso_percentual, text=f"Progresso: {concluidas}/{total_aulas} temas ({int(progresso_percentual*100)}%) | Questões Totais: {total_q}")
     
     st.divider()
