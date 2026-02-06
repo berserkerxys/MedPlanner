@@ -20,7 +20,7 @@ except Exception:
 
 DB_NAME = "medplanner_local.db"
 
-# --- 1. NORMALIZAÇÃO ---
+# --- 1. NORMALIZAÇÃO DE ÁREAS ---
 def normalizar_area(nome):
     """Padroniza os nomes para evitar duplicidade nos gráficos."""
     if not nome: return "Geral"
@@ -276,7 +276,7 @@ def resetar_revisoes_aula(u, aula_nome):
     estado[aula_nome] = dados
     return salvar_cronograma_status(u, estado)
 
-# --- 7. EXCLUSÃO DE REVISÕES ---
+# --- 7. EXCLUSÃO E REAGENDAMENTO ---
 def excluir_revisao(rid):
     """Exclui uma revisão agendada pelo ID."""
     client = get_supabase()
@@ -292,6 +292,29 @@ def excluir_revisao(rid):
         return True
     except Exception as e:
         print(f"Erro ao excluir revisão: {e}")
+        return False
+
+def reagendar_revisao(rid, nova_data):
+    """Atualiza a data de uma revisão existente."""
+    client = get_supabase()
+    # Converte para string YYYY-MM-DD
+    if hasattr(nova_data, 'strftime'):
+        nova_data_str = nova_data.strftime("%Y-%m-%d")
+    else:
+        nova_data_str = str(nova_data)
+        
+    try:
+        if client:
+            client.table("revisoes").update({"data_agendada": nova_data_str}).eq("id", rid).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("UPDATE revisoes SET data_agendada=? WHERE id=?", (nova_data_str, rid))
+                conn.commit()
+        trigger_refresh()
+        return True
+    except Exception as e:
+        print(f"Erro ao reagendar revisão: {e}")
         return False
 
 # --- 8. FUNÇÕES AUXILIARES ---
@@ -326,6 +349,109 @@ def concluir_revisao(rid, ac, tot):
     # Ao concluir uma revisão da Agenda, registramos como Pós-Aula
     registrar_estudo(rid, "Revisão", ac, tot, tipo_estudo="Pos-Aula")
     return "✅ OK"
+
+# --- NOVA LÓGICA SRS (Reagendamento Inteligente) ---
+def reagendar_inteligente(rid, desempenho):
+    """
+    Reagenda uma revisão com base no desempenho do usuário.
+    Desempenho:
+    - 'Excelente' (Fácil): Multiplica intervalo por 2.5
+    - 'Bom' (Médio): Multiplica intervalo por 1.5
+    - 'Ruim' (Difícil): Mantém intervalo ou reduz (x0.8)
+    - 'Muito Ruim' (Errei tudo): Reseta para 1 dia (x0)
+    """
+    client = get_supabase()
+    
+    # Busca a revisão atual para saber a data agendada (base) e o tipo atual
+    revisao_atual = None
+    try:
+        if client:
+            res = client.table("revisoes").select("*").eq("id", rid).execute()
+            if res.data: revisao_atual = res.data[0]
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute("SELECT * FROM revisoes WHERE id=?", (rid,))
+                revisao_atual = cur.fetchone()
+    except Exception as e:
+        print(f"Erro ao buscar revisão: {e}")
+        return False
+
+    if not revisao_atual: return False
+
+    # Define multiplicadores (Algoritmo simplificado SM-2)
+    multiplicadores = {
+        "Excelente": 2.5,  # Super fácil, joga pra longe
+        "Bom": 1.5,        # Normal, aumenta um pouco
+        "Ruim": 0.5,       # Difícil, encurta o prazo
+        "Muito Ruim": 0    # Reset (revisar amanhã)
+    }
+    
+    fator = multiplicadores.get(desempenho, 1.0)
+    
+    # Calcula dias desde a última revisão (ou criação) até hoje para saber o intervalo real
+    # Mas simplificando: Vamos usar um intervalo base fixo se for a primeira, ou expandir o anterior
+    # Como não guardamos o "intervalo anterior" explicitamente, vamos estimar baseada no 'tipo' ou usar data_agendada - hoje
+    
+    # Estratégia Robusta: Calcular nova data a partir de HOJE
+    hoje = datetime.now().date()
+    
+    # Intervalo Base Padrão (se for a primeira revisão ou reset)
+    intervalo_dias = 1 
+    
+    # Tenta inferir o intervalo atual pelo 'tipo' (ex: "1 Semana" -> 7 dias)
+    tipo_atual = revisao_atual['tipo']
+    if "1 Semana" in tipo_atual: intervalo_dias = 7
+    elif "1 Mês" in tipo_atual: intervalo_dias = 30
+    elif "2 Meses" in tipo_atual: intervalo_dias = 60
+    elif "4 Meses" in tipo_atual: intervalo_dias = 120
+    
+    # Aplica o fator
+    novo_intervalo = max(1, int(intervalo_dias * fator)) # Mínimo de 1 dia
+    
+    if desempenho == "Muito Ruim":
+        novo_intervalo = 1 # Força revisão amanhã
+        novo_tipo = "Revisão de Recuperação (1 dia)"
+    else:
+        novo_tipo = f"Revisão Inteligente ({novo_intervalo} dias)"
+
+    nova_data = (hoje + timedelta(days=novo_intervalo)).strftime("%Y-%m-%d")
+
+    # 1. Marca a atual como concluída
+    try:
+        if client:
+            client.table("revisoes").update({"status": "Concluido"}).eq("id", rid).execute()
+        else:
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("UPDATE revisoes SET status='Concluido' WHERE id=?", (rid,))
+                conn.commit()
+    except: pass # Segue o baile
+
+    # 2. Cria a nova revisão futura
+    try:
+        if client:
+            client.table("revisoes").insert({
+                "usuario_id": revisao_atual['usuario_id'],
+                "assunto_nome": revisao_atual['assunto_nome'],
+                "grande_area": revisao_atual['grande_area'],
+                "data_agendada": nova_data,
+                "tipo": novo_tipo,
+                "status": "Pendente"
+            }).execute()
+        else:
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute(
+                    "INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)",
+                    (revisao_atual['usuario_id'], revisao_atual['assunto_nome'], revisao_atual['grande_area'], nova_data, novo_tipo, "Pendente")
+                )
+                conn.commit()
+        
+        trigger_refresh()
+        return True, nova_data
+    except Exception as e:
+        print(f"Erro ao criar nova revisão SRS: {e}")
+        return False
 
 # Stubs essenciais
 def get_status_gamer(u, n=None): 
