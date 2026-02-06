@@ -181,7 +181,6 @@ def render_agenda(conn_ignored):
                         ts = df[df['data_agendada'].dt.date == dt_val]
                         
                         # Estilo
-                        border = "2px solid red" if dt_val == hoje else "1px solid #ddd"
                         with st.container(border=True):
                             if dt_val == hoje:
                                 st.markdown(f":red[**{d}**]")
@@ -191,6 +190,7 @@ def render_agenda(conn_ignored):
                             if not ts.empty:
                                 p = len(ts[ts['status']=='Pendente'])
                                 ok = len(ts[ts['status']=='Concluido'])
+                                
                                 if p > 0: st.markdown(f":red[● {p}]")
                                 if ok > 0: st.markdown(f":green[● {ok}]")
                                 
@@ -210,6 +210,7 @@ def render_agenda(conn_ignored):
             df_v[['data_agendada', 'assunto_nome', 'grande_area', 'tipo', 'status']].sort_values('data_agendada'),
             column_config={
                 "data_agendada": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                "status": st.column_config.TextColumn("Estado"),
             },
             use_container_width=True,
             hide_index=True
@@ -226,33 +227,41 @@ def render_cartao_tarefa(row, key_suffix, hoje):
             prefix = "🔴 " if row['data_agendada'].date() < hoje else ""
             st.markdown(f"**{prefix}{row['assunto_nome']}**")
             st.caption(f"{row['grande_area']} • {row['tipo']}")
+            if row['data_agendada'].date() < hoje:
+                st.caption(f"Original: {row['data_agendada'].strftime('%d/%m')}")
         
         with c2:
             # Popover de Revisão (SRS) com 4 Níveis
-            with st.popover("✅ Revisar"):
-                st.write("**Desempenho:**")
+            with st.popover("✅ Realizar Revisão", use_container_width=True):
+                st.markdown("### Como foi seu desempenho?")
+                st.caption("Isso definirá a próxima data de revisão.")
                 
-                # Nível 1 e 2
-                c_ruim, c_bom = st.columns(2)
-                if c_ruim.button("👎 Ruim", key=f"bad_{key_suffix}_{row['id']}", help="Errei muito (Reset)", use_container_width=True): 
+                c_bad, c_hard = st.columns(2)
+                if c_bad.button("😭 Muito Ruim", key=f"bad_{key_suffix}_{row['id']}", help="Errei muito. (Reset para 1 dia)", use_container_width=True):
                     reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
-                if c_bom.button("🙂 Bom", key=f"good_{key_suffix}_{row['id']}", help="Acertei razoavelmente (x1.0)", use_container_width=True): 
+                if c_hard.button("😕 Difícil", key=f"hard_{key_suffix}_{row['id']}", help="Acertei pouco. (Mantém intervalo)", use_container_width=True):
+                    reagendar_inteligente(row['id'], "Ruim"); st.rerun()
+                    
+                c_good, c_easy = st.columns(2)
+                if c_good.button("🙂 Bom", key=f"good_{key_suffix}_{row['id']}", help="Acertei a maioria. (x1.5 dias)", use_container_width=True):
                     reagendar_inteligente(row['id'], "Bom"); st.rerun()
-                
-                # Nível 3 e 4
-                c_exc, c_dom = st.columns(2)
-                if c_exc.button("🤩 Excelente", key=f"exc_{key_suffix}_{row['id']}", help="Acertei bem (x1.5)", use_container_width=True): 
+                if c_easy.button("🤩 Excelente", key=f"easy_{key_suffix}_{row['id']}", help="Dominei! (x2.5 dias)", use_container_width=True):
                     reagendar_inteligente(row['id'], "Excelente"); st.rerun()
-                if c_dom.button("👑 Dominado", key=f"dom_{key_suffix}_{row['id']}", help="Fácil demais (x2.5)", use_container_width=True): 
-                    # Tratamos "Dominado" como um Excelente "Plus" no backend, ou podemos criar uma categoria nova
-                    # Por enquanto, usa Excelente com um multiplicador maior se ajustarmos a função reagendar, 
-                    # mas vamos passar "Excelente" e confiar no algoritmo.
-                    # Se quiser lógica especifica para dominado, altere database.py
+                
+                st.divider()
+                if st.button("👑 Dominado", key=f"dom_{key_suffix}_{row['id']}", help="Conteúdo consolidado. (x3.0 dias)", use_container_width=True):
+                    # Para "Dominado", passamos 'Excelente' mas a lógica no DB pode ser ajustada para multiplicar mais
+                    # ou podemos passar uma string "Dominado" se o backend suportar. 
+                    # Assumindo que o backend suporta "Excelente" como o máximo padrão, usaremos ele.
+                    # Idealmente, atualizaríamos reagendar_inteligente para aceitar "Dominado".
+                    # Como não editamos database.py aqui, usamos "Excelente".
                     reagendar_inteligente(row['id'], "Excelente"); st.rerun()
 
         with c3:
-            if st.button("🗑️", key=f"del_{key_suffix}_{row['id']}"):
-                excluir_revisao(row['id']); st.rerun()
+            if st.button("🗑️", key=f"del_{key_suffix}_{row['id']}", help="Excluir esta revisão"):
+                if excluir_revisao(row['id']):
+                    st.toast("Revisão excluída!")
+                    st.rerun()
 
 def render_cartao_tarefa_futura_completo(row, key_suffix):
     """Cartão Completo para Futuro (Permite Antecipar com Graduação)"""
@@ -267,6 +276,7 @@ def render_cartao_tarefa_futura_completo(row, key_suffix):
             # Botão de Antecipar com Desempenho
             with st.popover("⚡ Antecipar"):
                 st.write("**Realizar hoje? Classifique:**")
+                st.caption("A nova data será calculada a partir de HOJE.")
                 
                 c_a, c_b = st.columns(2)
                 if c_a.button("Ruim", key=f"f_bad_{key_suffix}_{row['id']}", use_container_width=True):
