@@ -12,18 +12,16 @@ st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide
 st.markdown("""
 <style>
     [data-testid="stSidebarNav"] {display: none;}
-    .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 20px; border-bottom: 2px solid #f0f2f6; }
-    .stTabs [data-baseweb="tab"] { font-size: 16px; font-weight: 600; }
+    .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 15px; border-bottom: 2px solid #f0f2f6; }
+    .stTabs [data-baseweb="tab"] { font-size: 14px; font-weight: 600; padding: 0.5rem 1rem; }
     .login-header { text-align: center; margin-bottom: 2rem; }
     .stButton>button { border-radius: 8px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- GERENCIADOR DE COOKIES ---
-# IMPORTANTE: Não use @st.cache_resource aqui. O CookieManager deve ser criado na execução.
-# Usamos uma chave única para evitar conflitos de 'Duplicate Key'.
+# Gerenciador de Cookies
 def get_cookie_manager():
-    return stx.CookieManager(key="app_main_cookie_manager")
+    return stx.CookieManager()
 
 cookie_manager = get_cookie_manager()
 
@@ -43,6 +41,7 @@ try:
     from agenda import render_agenda
     from cronograma import render_cronograma
     from dashboard import render_dashboard
+    from banco_questoes import render_banco_questoes # Nova Importação
     
 except Exception as e:
     _import_ok = False
@@ -55,7 +54,6 @@ if not _import_ok:
 
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
-    # Pequeno delay para garantir que o componente JS carregou
     time.sleep(0.1)
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
@@ -65,21 +63,17 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
-            st.rerun() # Recarrega para aplicar o estado logado imediatamente
+            st.rerun()
             return True
         except:
             return False
     return False
 
-# Inicialização de Estado
-if 'logado' not in st.session_state: 
-    st.session_state.logado = False
-    
+if 'logado' not in st.session_state: st.session_state.logado = False
 if 'username' not in st.session_state: st.session_state.username = "guest"
 if 'u_nome' not in st.session_state: st.session_state.u_nome = "Visitante"
 if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
-# Tenta login automático se não estiver logado
 if not st.session_state.logado:
     verificar_sessao_automatica()
 
@@ -87,11 +81,8 @@ def fazer_login(u, nome_real):
     st.session_state.logado = True
     st.session_state.username = u
     st.session_state.u_nome = nome_real
-    
-    # Salva cookie por 30 dias
     expires_at = datetime.now() + timedelta(days=30)
     cookie_manager.set("medplanner_auth", u, expires_at=expires_at)
-    
     st.toast(f"Bem-vindo de volta, {nome_real}!", icon="👋")
     time.sleep(0.5)
     st.rerun()
@@ -99,9 +90,7 @@ def fazer_login(u, nome_real):
 def fazer_logout():
     st.session_state.logado = False
     st.session_state.username = "guest"
-    # Remove o cookie
     cookie_manager.delete("medplanner_auth")
-    time.sleep(0.1)
     st.rerun()
 
 def render_resumos_ui(u):
@@ -111,14 +100,12 @@ def app_principal():
     try:
         render_sidebar()
         
-        # Check de Logout vindo da Sidebar
         if not st.session_state.logado:
             fazer_logout()
             return
 
         st.markdown("<h2 style='text-align:center;'>🩺 MEDPLANNER PRO</h2>", unsafe_allow_html=True)
 
-        # Pomodoro
         with st.expander("⏲️ Foco Pomodoro", expanded=False):
             c1, c2, c3 = st.columns([1, 2, 1])
             with c2:
@@ -132,24 +119,24 @@ def app_principal():
                 st.session_state["_pom_rem"] = max(0, st.session_state["_pom_rem"]-1)
                 time.sleep(1); st.rerun()
 
-        # Abas Principais
+        # Abas Principais Atualizadas
         abas = st.tabs([
-            "📊 DASHBOARD", "🤖 MENTOR IA", "🧠 CADERNO ERROS", "⏱️ SIMULADO", 
+            "📊 DASHBOARD", "🤖 MENTOR IA", "🏦 QUESTÕES", "🧠 ERROS", "⏱️ SIMULADO", 
             "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
         ])
         
-        with abas[0]: 
-            from dashboard import render_dashboard; render_dashboard(None)
+        with abas[0]: render_dashboard(None)
         with abas[1]: render_mentor(None)
-        with abas[2]: render_caderno_erros(None)
-        with abas[3]: render_simulado_real(None)
-        with abas[4]: 
-            from agenda import render_agenda; render_agenda(None)
+        with abas[2]: render_banco_questoes(None) # Nova aba
+        with abas[3]: render_caderno_erros(None)
+        with abas[4]: render_simulado_real(None)
         with abas[5]: 
-            from videoteca import render_videoteca; render_videoteca(None)
+            from agenda import render_agenda; render_agenda(None)
         with abas[6]: 
+            from videoteca import render_videoteca; render_videoteca(None)
+        with abas[7]: 
             from cronograma import render_cronograma; render_cronograma(None)
-        with abas[7]: render_perfil(None)
+        with abas[8]: render_perfil(None)
 
     except Exception:
         st.error("Erro no app principal"); st.code(traceback.format_exc())
@@ -168,8 +155,7 @@ def tela_login():
                 if st.button("Acessar", type="primary", use_container_width=True):
                     if u and p:
                         ok, nome = verificar_login(u, p)
-                        if ok:
-                            fazer_login(u, nome)
+                        if ok: fazer_login(u, nome)
                         else: st.error(nome)
                     else: st.warning("Preencha tudo.")
             
@@ -185,7 +171,6 @@ def tela_login():
                         else: st.error(f"Erro: {msg}")
                     else: st.warning("Preencha tudo.")
 
-# Lógica de Controle de Fluxo
 if st.session_state.logado:
     app_principal()
 else:
