@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime, timedelta
 from database import (
     get_cronograma_status, 
     salvar_cronograma_status, 
     normalizar_area, 
     calcular_meta_questoes,
     resetar_revisoes_aula,
-    registrar_estudo # Necessário para agendar a revisão no histórico/agenda
+    registrar_estudo
 )
 
 # Configuração Visual
@@ -35,20 +34,18 @@ def reset_callback(u, aula_nome):
 
 def agendar_revisao_callback(u, aula_nome, acertos_total, total_total):
     """
-    Marca o estudo como encerrado e agenda a revisão na agenda.
+    Marca o estudo como encerrado, agenda a revisão e ZERA os contadores do cronograma.
     """
-    # 1. Registra no histórico como um estudo consolidado, o que dispara o agendamento de revisão (srs=True)
-    # Usamos "Pos-Aula" para garantir que o sistema entenda como estudo completo
-    # ATENÇÃO: A função registrar_estudo no database.py já lida com a inserção na tabela de revisões se srs=True
+    # 1. Registra no histórico (srs=True cria entrada na Agenda)
     msg = registrar_estudo(u, aula_nome, acertos_total, total_total, tipo_estudo="Pos-Aula", srs=True)
     
-    if "salvo" in msg or "Salvo" in msg:
+    if "agendada" in msg or "Salvo" in msg or "salvo" in msg:
         st.toast(f"Revisão agendada para {aula_nome}!", icon="📅")
         
-        # 2. Atualiza o status no cronograma para refletir que a revisão foi agendada (opcional, visual)
-        # Poderíamos marcar um flag 'revisao_agendada': True no estado do cronograma
+        # 2. ZERA os contadores visuais do cronograma para o próximo ciclo
+        resetar_revisoes_aula(u, aula_nome)
         
-        # st.rerun() # Opcional: recarrega para mostrar mudanças
+        # st.rerun() # Opcional: recarrega para mostrar barras zeradas
     else:
         st.error(f"Erro ao agendar: {msg}")
 
@@ -92,20 +89,13 @@ def render_cronograma(conn_ignored):
     # KPIs Calculados Dinamicamente
     concluidas = sum(1 for k, v in estado.items() if v.get('feito'))
     total_aulas = len(df)
-    
-    # Soma total de questões realizadas (Pré + Pós) em todos os temas
     total_q = sum(
         (v.get('total_pos', 0) or 0) + (v.get('total_pre', 0) or 0) 
         for v in estado.values()
     )
     
     # Barra de Progresso Global Dinâmica
-    # Garante que não haja divisão por zero
-    if total_aulas > 0:
-        progresso_percentual = min(concluidas / total_aulas, 1.0)
-    else:
-        progresso_percentual = 0.0
-        
+    progresso_percentual = min(concluidas / total_aulas, 1.0) if total_aulas > 0 else 0
     st.progress(progresso_percentual, text=f"Progresso: {concluidas}/{total_aulas} temas ({int(progresso_percentual*100)}%) | Questões Totais: {total_q}")
     
     st.divider()
@@ -155,7 +145,6 @@ def render_cronograma(conn_ignored):
                     ac_pre = d.get('acertos_pre', 0)
                     tt_pre = d.get('total_pre', 0)
                     
-                    # Barra visual relativa à META
                     prog_pre = min(tt_pre / meta_pre, 1.0) if meta_pre > 0 else 0
                     
                     if tt_pre > 0:
@@ -182,18 +171,14 @@ def render_cronograma(conn_ignored):
                     
                     if tt_total > 0:
                         perc_geral = int(ac_total / tt_total * 100)
-                        # Barra de desempenho (não de meta, mas de acertos)
                         st.progress(ac_total/tt_total, text=f"Total: {perc_geral}%")
                         
-                        # Botões de Ação
                         col_btn1, col_btn2 = st.columns(2)
                         with col_btn1:
-                            # Botão Agendar Revisão
-                            if st.button("📅", key=f"agd_{aula}", help="Agendar Revisão (Marca como Encerrado)"):
+                            if st.button("📅", key=f"agd_{aula}", help="Agendar Revisão (Marca como Encerrado e Zera)"):
                                 agendar_revisao_callback(u, aula, ac_total, tt_total)
-                        
+                                st.rerun()
                         with col_btn2:
-                            # Botão Reset
                             if st.button("↺", key=f"rst_{aula}", help="Reiniciar ciclo"):
                                 reset_callback(u, aula)
                                 st.rerun()
