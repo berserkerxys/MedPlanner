@@ -19,8 +19,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Gerenciador de Cookies (Deve ser inicializado no topo)
-@st.cache_resource(experimental_allow_widgets=True)
+# Gerenciador de Cookies (CORRIGIDO: Removido experimental_allow_widgets=True)
+@st.cache_resource
 def get_cookie_manager():
     return stx.CookieManager()
 
@@ -55,21 +55,14 @@ if not _import_ok:
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
     # Tenta ler o cookie de autenticação
-    # O cookie armazenará: "username|hash_validacao"
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
     if auth_cookie and not st.session_state.get('logado', False):
         try:
-            # Formato simples: username
-            # Em produção real, usaria um token JWT, mas aqui o username basta se confiarmos no cookie
             user_salvo = auth_cookie
-            # Opcional: Validar se o usuário ainda existe no banco
-            # Como verificar_login pede senha, aqui confiamos no cookie por enquanto
-            # ou fazemos uma verificação de existência simples
-            
             st.session_state.logado = True
             st.session_state.username = user_salvo
-            st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize() # Ou buscar nome real no DB
+            st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
             return True
         except:
             return False
@@ -77,7 +70,6 @@ def verificar_sessao_automatica():
 
 # Inicialização de Estado
 if 'logado' not in st.session_state: 
-    # Tenta recuperar sessão antes de definir como False
     st.session_state.logado = False
     
 if 'username' not in st.session_state: st.session_state.username = "guest"
@@ -86,7 +78,6 @@ if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
 # Tenta login automático se não estiver logado
 if not st.session_state.logado:
-    # Pequeno delay para garantir que o gerenciador de cookies carregou
     time.sleep(0.1)
     verificar_sessao_automatica()
 
@@ -106,23 +97,14 @@ def fazer_login(u, nome_real):
 def fazer_logout():
     st.session_state.logado = False
     st.session_state.username = "guest"
-    # Deleta o cookie
     cookie_manager.delete("medplanner_auth")
     st.rerun()
 
 def render_resumos_ui(u):
-    # (Mantida a função original para compatibilidade, se usada)
     pass
 
 def app_principal():
     try:
-        # Passamos a função de logout para a sidebar usar
-        # Mas como a sidebar está em outro arquivo, ela precisa chamar uma função global ou
-        # alterar o session_state e o cookie. 
-        # A melhor forma é injetar o logout na sidebar ou lidar com isso aqui.
-        # No sidebar_v2.py, o botão de logout apenas muda session_state.logado = False
-        # Precisamos interceptar isso para limpar o cookie também.
-        
         render_sidebar()
         
         # Check de Logout vindo da Sidebar
@@ -183,7 +165,7 @@ def tela_login():
                     if u and p:
                         ok, nome = verificar_login(u, p)
                         if ok:
-                            fazer_login(u, nome) # Usa a nova função com cookie
+                            fazer_login(u, nome)
                         else: st.error(nome)
                     else: st.warning("Preencha tudo.")
             
