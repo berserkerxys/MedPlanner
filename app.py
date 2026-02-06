@@ -19,8 +19,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Gerenciador de Cookies (CORRIGIDO: Removido experimental_allow_widgets=True)
-@st.cache_resource
+# Gerenciador de Cookies
+# Removido @st.cache_resource para evitar CachedWidgetWarning e erros de widget dentro de cache
 def get_cookie_manager():
     return stx.CookieManager()
 
@@ -55,6 +55,8 @@ if not _import_ok:
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
     # Tenta ler o cookie de autenticação
+    # Nota: cookie_manager.get_all() ou .get() pode precisar de um tempo para carregar no front
+    time.sleep(0.1) # Pequeno delay para garantir carga
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
     if auth_cookie and not st.session_state.get('logado', False):
@@ -78,7 +80,6 @@ if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
 # Tenta login automático se não estiver logado
 if not st.session_state.logado:
-    time.sleep(0.1)
     verificar_sessao_automatica()
 
 def fazer_login(u, nome_real):
