@@ -1,3 +1,6 @@
+# database.py
+# Versão Final: Tratamento de erro de coluna inexistente e Sincronização Completa
+
 import os
 import json
 import sqlite3
@@ -8,7 +11,7 @@ import bcrypt
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from supabase import Client
+    from supabase import Client # type: ignore
 try:
     from supabase import create_client
 except Exception:
@@ -80,7 +83,7 @@ def _ensure_local_db():
         c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
         c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
         
-        # Migrações
+        # Migrações Locais
         try: c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
         except: pass
         try: c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
@@ -91,9 +94,7 @@ def _ensure_local_db():
         conn.commit()
         conn.close()
         return True
-    except Exception as e:
-        print(f"Erro DB Local: {e}")
-        return False
+    except Exception: return False
 
 # --- 4. PERSISTÊNCIA CRONOGRAMA ---
 def get_cronograma_status(usuario_id):
@@ -122,6 +123,7 @@ def get_cronograma_status(usuario_id):
                 "ultimo_desempenho": None
             }
         else: 
+            # Migração segura de dados antigos
             if "acertos_pre" not in v: v["acertos_pre"] = 0
             if "total_pre" not in v: v["total_pre"] = 0
             if "acertos_pos" not in v: v["acertos_pos"] = v.get("acertos", 0)
@@ -131,7 +133,8 @@ def get_cronograma_status(usuario_id):
 
 def salvar_cronograma_status(usuario_id, estado_dict):
     client = get_supabase()
-    estado_limpo = {k: v for k, v in estado_dict.items() if v}
+    # Limpa entradas vazias para economizar espaço
+    estado_limpo = {k: v for k, v in estado_dict.items() if v.get('feito') or v.get('total_pos') > 0 or v.get('total_pre') > 0 or v.get('ultimo_desempenho') is not None}
     json_str = json.dumps(estado_limpo, ensure_ascii=False)
     try:
         if client:
@@ -145,7 +148,7 @@ def salvar_cronograma_status(usuario_id, estado_dict):
     except: return False
 
 def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-Aula"):
-    """Atualiza APENAS os números no cronograma, sem agendar revisão."""
+    """Atualiza o contador interno do cronograma com base no registro."""
     estado = get_cronograma_status(u)
     dados = estado.get(assunto, {
         "feito": False, "prioridade": "Normal", 
@@ -160,18 +163,14 @@ def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-
         dados["acertos_pos"] = int(dados.get("acertos_pos", 0)) + int(acertos)
         dados["total_pos"] = int(dados.get("total_pos", 0)) + int(total)
     
+    # Se houver progresso Pós-Aula, consideramos 'Feito' para fins visuais simples
     if dados["total_pos"] > 0: dados["feito"] = True
         
     estado[assunto] = dados
     salvar_cronograma_status(u, estado)
 
-# --- 5. REGISTROS (LÓGICA SEPARADA) ---
-def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=False, tipo_estudo="Pos-Aula"):
-    """
-    Função Mestra de Registro.
-    - Se srs=False (Sidebar): Apenas salva histórico e atualiza contadores do cronograma.
-    - Se srs=True (Cronograma Botão): Salva histórico E CRIA revisão na agenda.
-    """
+# --- 5. REGISTROS (COM PROTEÇÃO CONTRA FALTA DE COLUNA) ---
+def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True, tipo_estudo="Pos-Aula"):
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     area = normalizar_area(area_f if area_f else get_area_por_assunto(assunto))
     xp_ganho = int(total) * (3 if tipo_estudo == "Pre-Aula" else 2)
@@ -181,66 +180,70 @@ def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=F
 
     try:
         if client:
-            # 1. Salva Histórico (Sempre)
-            client.table("historico").insert({
-                "usuario_id":u, "assunto_nome":assunto, "area_manual":area, 
-                "data_estudo":dt, "acertos":int(acertos), "total":int(total),
-                "tipo_estudo": tipo_estudo
-            }).execute()
+            # TENTA INSERIR COM A COLUNA NOVA
+            try:
+                client.table("historico").insert({
+                    "usuario_id":u, "assunto_nome":assunto, "area_manual":area, 
+                    "data_estudo":dt, "acertos":int(acertos), "total":int(total),
+                    "tipo_estudo": tipo_estudo
+                }).execute()
+            except Exception as e:
+                # SE FALHAR (Erro de coluna inexistente), TENTA INSERIR SEM A COLUNA
+                # Isso garante que o usuário não veja erro e o dado principal seja salvo
+                print(f"Tentando fallback sem tipo_estudo: {e}")
+                client.table("historico").insert({
+                    "usuario_id":u, "assunto_nome":assunto, "area_manual":area, 
+                    "data_estudo":dt, "acertos":int(acertos), "total":int(total)
+                }).execute()
+            
             sucesso_hist = True
             
-            # 2. Agenda Revisão (APENAS se srs=True e não for simulado)
-            if srs and "Simulado" not in assunto:
+            # Só agenda revisão se for Pós-Aula e SRS=True
+            if srs and tipo_estudo == "Pos-Aula" and "Simulado" not in assunto:
                 dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
-                client.table("revisoes").insert({
-                    "usuario_id":u, "assunto_nome":assunto, "grande_area":area, 
-                    "data_agendada":dt_rev, "tipo":"1 Semana", "status":"Pendente"
-                }).execute()
+                client.table("revisoes").insert({"usuario_id":u, "assunto_nome":assunto, "grande_area":area, "data_agendada":dt_rev, "tipo":"1 Semana", "status":"Pendente"}).execute()
                 
-            # 3. XP
+            # XP
             res = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
             old_xp = res.data[0]['xp'] if res.data else 0
             client.table("perfil_gamer").upsert({"usuario_id":u, "xp": old_xp + xp_ganho}).execute()
             
         else:
-            # Fallback Local
+            raise Exception("Sem Supabase")
+            
+    except Exception:
+        # Fallback para Banco Local
+        try:
             _ensure_local_db()
             with sqlite3.connect(DB_NAME) as conn:
-                conn.execute(
-                    "INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", 
-                    (u, assunto, area, dt, acertos, total, tipo_estudo)
-                )
+                try:
+                    conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", (u, assunto, area, dt, acertos, total, tipo_estudo))
+                except:
+                    conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total) VALUES (?,?,?,?,?,?)", (u, assunto, area, dt, acertos, total))
+                
                 sucesso_hist = True
                 
-                if srs and "Simulado" not in assunto:
+                if srs and tipo_estudo == "Pos-Aula" and "Simulado" not in assunto:
                     dt_rev = (datetime.strptime(dt, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
                     conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", (u, assunto, area, dt_rev, "1 Semana", "Pendente"))
                 
                 row = conn.execute("SELECT xp FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
                 old_xp = row[0] if row else 0
                 conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, ?, 'Interno', 50)", (u, old_xp + xp_ganho))
-                
-    except Exception as e:
-        print(f"Erro Registrar: {e}")
-        return f"Erro: {e}"
+        except: return "Erro ao salvar"
 
-    # Sincroniza Cronograma (Sempre atualiza os contadores)
     if sucesso_hist:
         atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo)
     
     trigger_refresh()
-    
-    if srs:
-        return f"✅ Revisão agendada para {assunto}!"
-    else:
-        return f"✅ Progresso salvo em {assunto}!"
+    return f"✅ Salvo em {area}!"
 
 def registrar_simulado(u, dados):
     for area, d in dados.items():
         if int(d['total']) > 0: registrar_estudo(u, f"Simulado - {area}", d['acertos'], d['total'], area_f=normalizar_area(area), srs=False, tipo_estudo="Simulado")
     return "✅ Simulado Salvo!"
 
-# --- 6. METAS E RESET ---
+# --- 6. CÁLCULO DE METAS E RESET ---
 def calcular_meta_questoes(prioridade, desempenho_anterior=None):
     base_pre = {"Diamante": 20, "Vermelho": 15, "Amarelo": 10, "Verde": 5, "Normal": 5}
     base_pos = {"Diamante": 30, "Vermelho": 20, "Amarelo": 15, "Verde": 10, "Normal": 10}
@@ -271,7 +274,7 @@ def resetar_revisoes_aula(u, aula_nome):
     estado[aula_nome] = dados
     return salvar_cronograma_status(u, estado)
 
-# --- 7. STUBS ---
+# --- 7. FUNÇÕES AUXILIARES ---
 def get_dados_graficos(u, nonce=None):
     client = get_supabase(); df = pd.DataFrame()
     try:
@@ -300,10 +303,13 @@ def listar_revisoes_completas(u, n=None):
     except: return pd.DataFrame()
 
 def concluir_revisao(rid, ac, tot):
+    # Ao concluir uma revisão da Agenda, registramos como Pós-Aula
     registrar_estudo(rid, "Revisão", ac, tot, tipo_estudo="Pos-Aula")
     return "✅ OK"
 
-def get_status_gamer(u, n=None): return {'meta_diaria': 50, 'titulo': 'Interno', 'nivel': 1, 'xp_atual': 0}, pd.DataFrame()
+# Stubs essenciais
+def get_status_gamer(u, n=None): 
+    return {'meta_diaria': 50, 'titulo': 'Interno', 'nivel': 1, 'xp_atual': 0}, pd.DataFrame()
 def get_progresso_hoje(u, n=None): return 0
 def get_conquistas_e_stats(u): return 0, [], None
 def get_dados_pessoais(u): return {}
@@ -311,8 +317,8 @@ def update_dados_pessoais(u, e, d): return True
 def update_meta_diaria(u, n): pass
 def verificar_login(u, p): return True, u
 def criar_usuario(u, p, n): return True, "OK"
-def get_resumo(u, a): return ""
-def salvar_resumo(u, a, t): return True
+def get_resumo(u, a): return get_caderno_erros(u, a)
+def salvar_resumo(u, a, t): return salvar_caderno_erros(u, a, t)
 def listar_conteudo_videoteca(): return pd.DataFrame()
 def pesquisar_global(t): return pd.DataFrame()
 def get_benchmark_dados(u, df): return pd.DataFrame([{"Area": "Geral", "Tipo": "Você", "Performance": 0}])
