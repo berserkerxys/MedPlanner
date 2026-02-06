@@ -521,7 +521,32 @@ def get_conquistas_e_stats(u):
     prox = next((t for t in tiers if total < t['meta']), None)
     return total, conq, prox
 
-# --- 9. AUTH ---
+# --- 9. RESET E ADMINISTRAÇÃO ---
+def resetar_conta_usuario(u):
+    """Zera todo o progresso do usuário (histórico, xp, cronograma), mantendo o login."""
+    client = get_supabase()
+    try:
+        if client:
+            client.table("historico").delete().eq("usuario_id", u).execute()
+            client.table("revisoes").delete().eq("usuario_id", u).execute()
+            client.table("cronogramas").delete().eq("usuario_id", u).execute()
+            client.table("resumos").delete().eq("usuario_id", u).execute()
+            client.table("perfil_gamer").update({"xp": 0, "titulo": "Interno"}).eq("usuario_id", u).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("DELETE FROM historico WHERE usuario_id=?", (u,))
+                conn.execute("DELETE FROM revisoes WHERE usuario_id=?", (u,))
+                conn.execute("DELETE FROM cronogramas WHERE usuario_id=?", (u,))
+                conn.execute("DELETE FROM resumos WHERE usuario_id=?", (u,))
+                conn.execute("UPDATE perfil_gamer SET xp=0, titulo='Interno' WHERE usuario_id=?", (u,))
+        trigger_refresh()
+        return True
+    except Exception as e:
+        print(f"Erro no reset: {e}")
+        return False
+
+# --- 10. AUTH ---
 def verificar_login(u, p):
     client = get_supabase()
     if client:
@@ -546,9 +571,6 @@ def criar_usuario(u, p, n):
     except Exception as e: return False, str(e)
 
 # Aliases
-def get_resumo(u, a): return get_caderno_erros(u, a)
-def salvar_resumo(u, a, t): return salvar_caderno_erros(u, a, t)
 def listar_conteudo_videoteca(): return pd.DataFrame()
 def pesquisar_global(t): return pd.DataFrame()
-def get_benchmark_dados(u, df): return pd.DataFrame([{"Area": "Geral", "Tipo": "Você", "Performance": 0}])
 def get_db(): return True
