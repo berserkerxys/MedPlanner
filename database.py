@@ -1,5 +1,5 @@
 # database.py
-# Versão Final Completa: Suporte a todas as funcionalidades do MedPlanner Elite
+# Versão Final Corrigida: Remove Stubs duplicados e corrige contagem de questões
 
 import os
 import json
@@ -21,9 +21,8 @@ except Exception:
 
 DB_NAME = "medplanner_local.db"
 
-# --- 1. NORMALIZAÇÃO DE ÁREAS ---
+# --- 1. NORMALIZAÇÃO ---
 def normalizar_area(nome):
-    """Padroniza os nomes para evitar duplicidade nos gráficos."""
     if not nome: return "Geral"
     n_upper = str(nome).strip().upper()
     mapeamento = {
@@ -80,7 +79,6 @@ def _ensure_local_db():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         
-        # Tabelas Principais
         c.execute("CREATE TABLE IF NOT EXISTS historico (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, area_manual TEXT, data_estudo TEXT, acertos INTEGER, total INTEGER, tipo_estudo TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS revisoes (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, grande_area TEXT, data_agendada TEXT, tipo TEXT, status TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS perfil_gamer (usuario_id TEXT PRIMARY KEY, xp INTEGER, titulo TEXT, meta_diaria INTEGER)")
@@ -88,7 +86,7 @@ def _ensure_local_db():
         c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
         c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
         
-        # Migrações Automáticas
+        # Migrações
         try: c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
         except: pass
         try: c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
@@ -101,111 +99,7 @@ def _ensure_local_db():
         return True
     except Exception: return False
 
-# --- 4. GESTÃO DE DADOS PESSOAIS ---
-def get_dados_pessoais(u):
-    client = get_supabase()
-    dados = {"email": "", "nascimento": None}
-    try:
-        if client:
-            res = client.table("usuarios").select("email, data_nascimento").eq("username", u).execute()
-            if res.data:
-                dados["email"] = res.data[0].get("email") or ""
-                dados["nascimento"] = res.data[0].get("data_nascimento")
-        else:
-            _ensure_local_db()
-            with sqlite3.connect(DB_NAME) as conn:
-                conn.row_factory = sqlite3.Row
-                row = conn.execute("SELECT email, data_nascimento FROM usuarios WHERE username=?", (u,)).fetchone()
-                if row:
-                    dados["email"] = row["email"] or ""
-                    dados["nascimento"] = row["data_nascimento"]
-    except: pass
-    return dados
-
-def update_dados_pessoais(u, email, nascimento_str):
-    client = get_supabase()
-    try:
-        if client:
-            client.table("usuarios").update({"email": email, "data_nascimento": nascimento_str}).eq("username", u).execute()
-        else:
-            _ensure_local_db()
-            with sqlite3.connect(DB_NAME) as conn:
-                conn.execute("UPDATE usuarios SET email=?, data_nascimento=? WHERE username=?", (email, nascimento_str, u))
-        return True
-    except: return False
-
-# --- 5. BENCHMARK (COMPARATIVO) ---
-def get_benchmark_dados(u, df_usuario):
-    areas = ["Cirurgia", "Clínica Médica", "Ginecologia e Obstetrícia", "Pediatria", "Preventiva"]
-    dados = []
-    stats_user = {a: 0 for a in areas}
-
-    if not df_usuario.empty:
-        if 'area' not in df_usuario.columns:
-            if 'area_manual' in df_usuario.columns: df_usuario['area'] = df_usuario['area_manual'].apply(normalizar_area)
-            else: df_usuario['area'] = "Geral"
-        
-        grupo = df_usuario.groupby('area').agg({'acertos': 'sum', 'total': 'sum'})
-        for area in areas:
-            if area in grupo.index:
-                ac, tt = grupo.loc[area, 'acertos'], grupo.loc[area, 'total']
-                stats_user[area] = (ac / tt * 100) if tt > 0 else 0
-
-    # Dados da Comunidade (Simulados para Demo)
-    stats_comunidade = {"Cirurgia": 65, "Clínica Médica": 62, "Ginecologia e Obstetrícia": 70, "Pediatria": 72, "Preventiva": 75}
-
-    for area in areas:
-        dados.append({"Area": area, "Tipo": "Você", "Performance": stats_user[area]})
-        dados.append({"Area": area, "Tipo": "Comunidade", "Performance": stats_comunidade[area]})
-    
-    return pd.DataFrame(dados)
-
-# --- 6. CADERNO DE ERROS (FUNÇÕES CORRIGIDAS) ---
-def get_caderno_erros(u, area):
-    """
-    Busca o conteúdo do caderno de erros (tabela 'resumos') para um usuário e área.
-    """
-    client = get_supabase()
-    try:
-        if client:
-            res = client.table("resumos").select("conteudo").eq("usuario_id", u).eq("grande_area", area).execute()
-            return res.data[0]['conteudo'] if res.data else ""
-        
-        _ensure_local_db()
-        with sqlite3.connect(DB_NAME) as conn:
-            row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
-            return row[0] if row else ""
-    except Exception as e:
-        print(f"Erro ao ler caderno de erros: {e}")
-        return ""
-
-def salvar_caderno_erros(u, area, texto):
-    """
-    Salva o conteúdo do caderno de erros no banco de dados.
-    """
-    client = get_supabase()
-    if texto is None: texto = ""
-    
-    try:
-        if client:
-            client.table("resumos").upsert({
-                "usuario_id": u, 
-                "grande_area": area, 
-                "conteudo": texto
-            }).execute()
-        else:
-            _ensure_local_db()
-            with sqlite3.connect(DB_NAME) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", 
-                    (u, area, texto)
-                )
-        return True
-    except Exception as e:
-        print(f"Erro ao salvar caderno de erros: {e}")
-        return False
-
-# --- 7. PERSISTÊNCIA CRONOGRAMA ---
+# --- 4. PERSISTÊNCIA CRONOGRAMA ---
 def get_cronograma_status(usuario_id):
     client = get_supabase()
     dados_raw = {}
@@ -241,7 +135,7 @@ def get_cronograma_status(usuario_id):
 
 def salvar_cronograma_status(usuario_id, estado_dict):
     client = get_supabase()
-    estado_limpo = {k: v for k, v in estado_dict.items() if v}
+    estado_limpo = {k: v for k, v in estado_dict.items() if v.get('feito') or v.get('total_pos') > 0 or v.get('total_pre') > 0 or v.get('ultimo_desempenho') is not None}
     json_str = json.dumps(estado_limpo, ensure_ascii=False)
     try:
         if client:
@@ -274,7 +168,7 @@ def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-
     estado[assunto] = dados
     salvar_cronograma_status(u, estado)
 
-# --- 8. REGISTROS ---
+# --- 5. REGISTROS ---
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True, tipo_estudo="Pos-Aula"):
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     area = normalizar_area(area_f if area_f else get_area_por_assunto(assunto))
@@ -284,23 +178,18 @@ def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=T
 
     try:
         if client:
-            # TENTA INSERIR COM A COLUNA NOVA
             try:
                 client.table("historico").insert({
                     "usuario_id":u, "assunto_nome":assunto, "area_manual":area, 
                     "data_estudo":dt, "acertos":int(acertos), "total":int(total),
                     "tipo_estudo": tipo_estudo
                 }).execute()
-            except Exception as e:
-                # Se falhar (provavelmente coluna inexistente), tenta sem 'tipo_estudo'
-                if "PGRST204" in str(e) or "column" in str(e):
-                    print("Supabase: Coluna tipo_estudo ausente. Inserindo sem ela.")
-                    client.table("historico").insert({
-                        "usuario_id":u, "assunto_nome":assunto, "area_manual":area, 
-                        "data_estudo":dt, "acertos":int(acertos), "total":int(total)
-                    }).execute()
-                else:
-                    raise e # Re-lança se for outro erro
+            except:
+                # Fallback se coluna não existir
+                client.table("historico").insert({
+                    "usuario_id":u, "assunto_nome":assunto, "area_manual":area, 
+                    "data_estudo":dt, "acertos":int(acertos), "total":int(total)
+                }).execute()
             
             sucesso_hist = True
             
@@ -309,14 +198,14 @@ def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=T
                 client.table("revisoes").insert({"usuario_id":u, "assunto_nome":assunto, "grande_area":area, "data_agendada":dt_rev, "tipo":"1 Semana", "status":"Pendente"}).execute()
                 
             res = client.table("perfil_gamer").select("xp").eq("usuario_id", u).execute()
-            old_xp = res.data[0]['xp'] if res.data else 0
+            old_xp = int(res.data[0]['xp']) if res.data else 0
             client.table("perfil_gamer").upsert({"usuario_id":u, "xp": old_xp + xp_ganho}).execute()
             
         else:
             raise Exception("Sem Supabase")
             
     except Exception:
-        # Fallback para Banco Local
+        # Fallback Local
         try:
             _ensure_local_db()
             with sqlite3.connect(DB_NAME) as conn:
@@ -347,17 +236,15 @@ def registrar_simulado(u, dados):
         if int(d['total']) > 0: registrar_estudo(u, f"Simulado - {area}", d['acertos'], d['total'], area_f=normalizar_area(area), srs=False, tipo_estudo="Simulado")
     return "✅ Simulado Salvo!"
 
-# --- 9. CÁLCULO DE METAS E RESET ---
+# --- 6. CÁLCULO DE METAS E RESET ---
 def calcular_meta_questoes(prioridade, desempenho_anterior=None):
     base_pre = {"Diamante": 20, "Vermelho": 15, "Amarelo": 10, "Verde": 5, "Normal": 5}
     base_pos = {"Diamante": 30, "Vermelho": 20, "Amarelo": 15, "Verde": 10, "Normal": 10}
     meta_pre = base_pre.get(prioridade, 5)
     meta_pos = base_pos.get(prioridade, 10)
-    
     if desempenho_anterior is not None and desempenho_anterior < 0.6:
         meta_pre += 5
         meta_pos += 10
-        
     return meta_pre, meta_pos
 
 def resetar_revisoes_aula(u, aula_nome):
@@ -366,17 +253,15 @@ def resetar_revisoes_aula(u, aula_nome):
     ac = int(dados.get('acertos_pos', 0))
     tt = int(dados.get('total_pos', 0))
     if tt > 0: dados['ultimo_desempenho'] = ac / tt
-    
     dados['acertos_pre'] = 0
     dados['total_pre'] = 0
     dados['acertos_pos'] = 0
     dados['total_pos'] = 0
     dados['feito'] = False
-    
     estado[aula_nome] = dados
     return salvar_cronograma_status(u, estado)
 
-# --- 10. REAGENDAMENTO INTELIGENTE (SRS) ---
+# --- 7. REAGENDAMENTO INTELIGENTE (SRS) ---
 def reagendar_inteligente(rid, desempenho):
     client = get_supabase()
     revisao_atual = None
@@ -432,9 +317,7 @@ def reagendar_inteligente(rid, desempenho):
                              (revisao_atual['usuario_id'], revisao_atual['assunto_nome'], revisao_atual['grande_area'], nova_data, novo_tipo, "Pendente"))
         trigger_refresh()
         return True, nova_data
-    except Exception as e:
-        print(e)
-        return False
+    except Exception: return False
 
 def excluir_revisao(rid):
     client = get_supabase()
@@ -447,7 +330,7 @@ def excluir_revisao(rid):
         return True
     except: return False
 
-# --- 11. FUNÇÕES AUXILIARES ---
+# --- 8. FUNÇÕES AUXILIARES E GAMIFICAÇÃO ---
 def get_dados_graficos(u, nonce=None):
     client = get_supabase(); df = pd.DataFrame()
     try:
@@ -479,13 +362,107 @@ def concluir_revisao(rid, ac, tot):
     registrar_estudo(rid, "Revisão", ac, tot, tipo_estudo="Pos-Aula")
     return "✅ OK"
 
-def get_status_gamer(u, n=None): 
-    return {'meta_diaria': 50, 'titulo': 'Interno', 'nivel': 1, 'xp_atual': 0}, pd.DataFrame()
-def get_progresso_hoje(u, n=None): return 0
-def get_conquistas_e_stats(u): return 0, [], None
-def update_meta_diaria(u, n): pass
-def verificar_login(u, p): return True, u
-def criar_usuario(u, p, n): return True, "OK"
+def get_conquistas_e_stats(u):
+    client = get_supabase()
+    total_q = 0
+    try:
+        if client:
+            h = client.table("historico").select("total").eq("usuario_id", u).execute()
+            total_q = sum(x['total'] for x in h.data)
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                row = conn.execute("SELECT sum(total) FROM historico WHERE usuario_id=?", (u,)).fetchone()
+                total_q = row[0] if row and row[0] else 0
+    except: pass
+
+    tiers = [
+        {"nome": "Interno Iniciante", "meta": 100, "icon": "🏥"},
+        {"nome": "Residente R1", "meta": 2000, "icon": "🩺"},
+        {"nome": "Residente R3", "meta": 10000, "icon": "🧠"},
+        {"nome": "Staff", "meta": 15000, "icon": "🎓"},
+        {"nome": "A Lenda (Aprovado)", "meta": 20000, "icon": "🏆"},
+    ]
+    conq = [{"nome": t["nome"], "meta": t["meta"], "icon": t["icon"], "desbloqueado": total_q >= t["meta"]} for t in tiers]
+    prox = next((t for t in tiers if total_q < t['meta']), None)
+    return total_q, conq, prox
+
+def get_status_gamer(u, nonce=None):
+    client = get_supabase()
+    xp, meta = 0, 50
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    q, a = 0, 0
+    try:
+        if client:
+            res = client.table("perfil_gamer").select("*").eq("usuario_id", u).execute()
+            if res.data: 
+                xp = res.data[0].get('xp', 0)
+                meta = res.data[0].get('meta_diaria', 50)
+            h = client.table("historico").select("total, acertos").eq("usuario_id", u).eq("data_estudo", hoje).execute()
+            q, a = sum(x['total'] for x in h.data), sum(x['acertos'] for x in h.data)
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                row = conn.execute("SELECT xp, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
+                if row: xp, meta = row[0], row[1]
+                h_row = conn.execute("SELECT sum(total), sum(acertos) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
+                q, a = (h_row[0] or 0), (h_row[1] or 0)
+    except: pass
+    
+    q_total, _, _ = get_conquistas_e_stats(u)
+    titulo = "Interno"
+    if q_total > 2000: titulo = "R1"
+    if q_total > 10000: titulo = "R3"
+    if q_total > 20000: titulo = "Chefe"
+
+    status = {'nivel': 1 + (xp // 1000), 'xp_atual': xp % 1000, 'xp_total': xp, 'meta_diaria': meta, 'titulo': titulo}
+    df_m = pd.DataFrame([{"Icon": "🎯", "Meta": "Questões", "Prog": q, "Objetivo": meta, "Unid": "q"}])
+    return status, df_m
+
+def get_progresso_hoje(u, nonce=None):
+    _, df_m = get_status_gamer(u, nonce)
+    if not df_m.empty:
+        return df_m.iloc[0]['Prog']
+    return 0
+
+def update_meta_diaria(u, nova):
+    client = get_supabase()
+    try:
+        if client:
+            client.table("perfil_gamer").update({"meta_diaria": int(nova)}).eq("usuario_id", u).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("INSERT OR IGNORE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, 0, 'Interno', ?)", (u, nova))
+                conn.execute("UPDATE perfil_gamer SET meta_diaria=? WHERE usuario_id=?", (nova, u))
+    except: pass
+    trigger_refresh()
+
+def verificar_login(u, p):
+    client = get_supabase()
+    try:
+        if client:
+            res = client.table("usuarios").select("password_hash, nome").eq("username", u).execute()
+            if res.data and bcrypt.checkpw(p.encode(), res.data[0]['password_hash'].encode()): return True, res.data[0]['nome']
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                row = conn.execute("SELECT password_hash, nome FROM usuarios WHERE username=?", (u,)).fetchone()
+                if row and bcrypt.checkpw(p.encode(), row[0].encode()): return True, row[1]
+    except: pass
+    return False, "Credenciais inválidas"
+
+def criar_usuario(u, p, n):
+    client = get_supabase()
+    try:
+        pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+        if client: client.table("usuarios").insert({"username": u, "nome": n, "password_hash": pw}).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn: conn.execute("INSERT INTO usuarios (username, nome, password_hash) VALUES (?,?,?)", (u, n, pw))
+        return True, "OK"
+    except Exception as e: return False, str(e)
+
 def get_resumo(u, a): return get_caderno_erros(u, a)
 def salvar_resumo(u, a, t): return salvar_caderno_erros(u, a, t)
 def listar_conteudo_videoteca(): return pd.DataFrame()

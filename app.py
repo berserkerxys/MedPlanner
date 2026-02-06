@@ -19,11 +19,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Gerenciador de Cookies
-# REMOVIDO: @st.cache_resource para evitar CachedWidgetWarning e StreamlitDuplicateElementKey
-# O CookieManager deve ser instanciado diretamente no script principal
+# Gerenciador de Cookies (CORRIGIDO: Removido @st.cache_resource para evitar erro)
 def get_cookie_manager():
-    return stx.CookieManager(key="cookie_manager_main")
+    return stx.CookieManager()
 
 cookie_manager = get_cookie_manager()
 
@@ -56,8 +54,7 @@ if not _import_ok:
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
     # Tenta ler o cookie de autenticação
-    # Nota: cookie_manager.get_all() ou .get() pode precisar de um tempo para carregar no front
-    time.sleep(0.1) # Pequeno delay para garantir carga
+    time.sleep(0.1)
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
     if auth_cookie and not st.session_state.get('logado', False):
@@ -66,8 +63,6 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
-            # Força rerun para atualizar a interface com o estado logado
-            st.rerun()
             return True
         except:
             return False

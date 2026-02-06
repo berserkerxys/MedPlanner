@@ -15,27 +15,21 @@ def render_perfil(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # Dados
     status, _ = get_status_gamer(u, nonce)
     total_q_global, conquistas, proximo_nivel = get_conquistas_e_stats(u)
     dados_pessoais = get_dados_pessoais(u)
     prog = get_progresso_hoje(u, nonce)
     
-    # Valor do banco
     meta_banco = int(status.get('meta_diaria', 50))
-    
-    # Inicializa slider do perfil se não existir
     if "pf_meta_slider" not in st.session_state:
         st.session_state.pf_meta_slider = meta_banco
 
-    # --- 1. CABEÇALHO ---
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 3, 2])
         with c1: st.markdown("# 👨‍⚕️")
         with c2:
             st.markdown(f"### Dr(a). {st.session_state.get('u_nome', u)}")
             st.markdown(f"**Rank:** {status['titulo']}")
-            
             nasc_str = dados_pessoais.get('nascimento')
             if nasc_str:
                 try:
@@ -47,37 +41,22 @@ def render_perfil(conn_ignored):
 
     st.divider()
     
-    # --- 2. CONFIGURAÇÕES ---
+    # Configurações
     st.subheader("⚙️ Configurações e Dados")
     tab_meta, tab_dados = st.tabs(["🎯 Meta Diária", "📝 Dados Pessoais"])
     
     with tab_meta:
         st.caption("Defina seu ritmo de estudos diário:")
-        
         def on_pf_meta_change():
-            # 1. Captura valor
             novo = st.session_state.pf_meta_slider
-            
-            # 2. Salva no Banco
             update_meta_diaria(u, novo)
-            
-            # 3. Sincroniza com a SIDEBAR
             st.session_state.sb_meta_slider = novo
-            
             st.toast(f"Meta atualizada: {novo} questões!", icon="🔥")
 
         c_m1, c_m2 = st.columns([3, 1])
         with c_m1:
-            st.slider(
-                "Questões/dia:", 
-                min_value=10, 
-                max_value=200, 
-                step=5, 
-                key="pf_meta_slider", 
-                on_change=on_pf_meta_change
-            )
+            st.slider("Questões/dia:", 10, 200, step=5, key="pf_meta_slider", on_change=on_pf_meta_change)
         with c_m2:
-            # Feedback visual usando o valor do slider local
             meta_vis = st.session_state.pf_meta_slider if st.session_state.pf_meta_slider > 0 else 1
             st.metric("Hoje", f"{prog}/{meta_vis}", delta=f"{int(prog/meta_vis*100)}%")
 
@@ -85,14 +64,11 @@ def render_perfil(conn_ignored):
         with st.form("f_dados"):
             c1, c2 = st.columns(2)
             em = c1.text_input("Email", value=dados_pessoais.get("email", ""))
-            
             dt_val = None
             if dados_pessoais.get("nascimento"):
                 try: dt_val = datetime.strptime(dados_pessoais['nascimento'], "%Y-%m-%d")
                 except: pass
-            
             nasc = c2.date_input("Nascimento", value=dt_val, format="DD/MM/YYYY")
-            
             if st.form_submit_button("💾 Salvar Dados"):
                 nasc_fmt = nasc.strftime("%Y-%m-%d") if nasc else None
                 if update_dados_pessoais(u, em, nasc_fmt):
@@ -103,7 +79,6 @@ def render_perfil(conn_ignored):
 
     st.divider()
     
-    # --- 3. TROFÉUS ---
     st.subheader("🏆 Sala de Troféus")
     perc_aprov = min(total_q_global / 20000, 1.0)
     st.progress(perc_aprov, text=f"Rumo à Aprovação (20k): {int(perc_aprov*100)}%")
