@@ -1,5 +1,5 @@
 # database.py
-# Versão Final: Tratamento de erro de coluna inexistente e Sincronização Completa
+# Versão Final Completa: Suporte a todas as funcionalidades do MedPlanner Elite
 
 import os
 import json
@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 import bcrypt
+import random
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ DB_NAME = "medplanner_local.db"
 
 # --- 1. NORMALIZAÇÃO ---
 def normalizar_area(nome):
+    """Padroniza os nomes para evitar duplicidade nos gráficos."""
     if not nome: return "Geral"
     n_upper = str(nome).strip().upper()
     mapeamento = {
@@ -169,7 +171,7 @@ def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-
     estado[assunto] = dados
     salvar_cronograma_status(u, estado)
 
-# --- 5. REGISTROS (COM PROTEÇÃO CONTRA FALTA DE COLUNA) ---
+# --- 5. REGISTROS ---
 def registrar_estudo(u, assunto, acertos, total, data_p=None, area_f=None, srs=True, tipo_estudo="Pos-Aula"):
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     area = normalizar_area(area_f if area_f else get_area_por_assunto(assunto))
@@ -274,7 +276,25 @@ def resetar_revisoes_aula(u, aula_nome):
     estado[aula_nome] = dados
     return salvar_cronograma_status(u, estado)
 
-# --- 7. FUNÇÕES AUXILIARES ---
+# --- 7. EXCLUSÃO DE REVISÕES ---
+def excluir_revisao(rid):
+    """Exclui uma revisão agendada pelo ID."""
+    client = get_supabase()
+    try:
+        if client:
+            client.table("revisoes").delete().eq("id", rid).execute()
+        else:
+            _ensure_local_db()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("DELETE FROM revisoes WHERE id=?", (rid,))
+                conn.commit()
+        trigger_refresh()
+        return True
+    except Exception as e:
+        print(f"Erro ao excluir revisão: {e}")
+        return False
+
+# --- 8. FUNÇÕES AUXILIARES ---
 def get_dados_graficos(u, nonce=None):
     client = get_supabase(); df = pd.DataFrame()
     try:
