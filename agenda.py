@@ -9,109 +9,117 @@ def render_agenda(conn_ignored):
     
     u = st.session_state.username
     nonce = st.session_state.data_nonce
+    
+    # --- OTIMIZAÇÃO DE CARGA ---
+    # Carrega TODOS os dados de uma vez e coloca em cache de função (st.cache_data no database.py já ajuda)
+    # Aqui garantimos que só processamos datas uma vez por renderização
     df = listar_revisoes_completas(u, nonce)
     
     if df.empty:
         st.info("Sua agenda está vazia! Complete temas no Cronograma para agendar revisões.")
         return
     
-    # Processamento de Datas
-    df['data_agendada'] = pd.to_datetime(df['data_agendada'])
+    # Processamento ÚNICO de datas para todo o script
+    if not pd.api.types.is_datetime64_any_dtype(df['data_agendada']):
+        df['data_agendada'] = pd.to_datetime(df['data_agendada'])
+    
     hoje = datetime.now().date()
     
-    # Inicialização de Estado de Navegação (se não existir)
-    if 'agenda_week_offset' not in st.session_state:
-        st.session_state.agenda_week_offset = 0
-    if 'agenda_month_offset' not in st.session_state:
-        st.session_state.agenda_month_offset = 0
+    # Pré-cálculo de filtros comuns para agilidade
+    mask_pendente = df['status'] == 'Pendente'
+    df_pendente = df[mask_pendente]
     
-    # --- ABAS ---
-    tab_hoje, tab_futuro, tab_semana, tab_mes, tab_lista = st.tabs(["🔥 Foco Hoje", "🔮 Futuro", "🗓️ Semana (Visual)", "📅 Mês", "📚 Lista"])
+    # --- ESTADO DE NAVEGAÇÃO ---
+    if 'agenda_week_offset' not in st.session_state: st.session_state.agenda_week_offset = 0
+    if 'agenda_month_offset' not in st.session_state: st.session_state.agenda_month_offset = 0
+    
+    # --- INTERFACE DE ABAS ---
+    # Como 'df' já está na memória, a troca de abas é instantânea visualmente
+    tab_hoje, tab_futuro, tab_semana, tab_mes, tab_lista = st.tabs(["🔥 Foco Hoje", "🔮 Futuro", "🗓️ Semana", "📅 Mês", "📚 Lista"])
 
-    # --- 1. VISÃO DE HOJE (FOCO & ATRASADAS) ---
+    # --- 1. HOJE ---
     with tab_hoje:
-        tarefas_hoje = df[(df['data_agendada'].dt.date == hoje) & (df['status'] == 'Pendente')]
-        atrasadas = df[(df['data_agendada'].dt.date < hoje) & (df['status'] == 'Pendente')]
+        # Filtros rápidos em memória
+        tarefas_hoje = df_pendente[df_pendente['data_agendada'].dt.date == hoje]
+        atrasadas = df_pendente[df_pendente['data_agendada'].dt.date < hoje]
+        futuras_count = len(df_pendente[df_pendente['data_agendada'].dt.date > hoje])
         
         # KPIs
         c1, c2, c3 = st.columns(3)
         c1.metric("Para Hoje", len(tarefas_hoje))
         c2.metric("Atrasadas", len(atrasadas), delta_color="inverse")
-        c3.metric("Futuras", len(df[(df['data_agendada'].dt.date > hoje) & (df['status'] == 'Pendente')]))
+        c3.metric("Futuras", futuras_count)
         
         st.divider()
 
-        # Prioridade 1: Atrasadas
         if not atrasadas.empty:
             st.error(f"⚠️ {len(atrasadas)} revisões atrasadas! Prioridade máxima.")
-            for i, row in atrasadas.iterrows():
+            # Renderiza lista
+            for i, row in atrasadas.sort_values('data_agendada').iterrows():
                 render_cartao_tarefa(row, "atrasada", hoje)
             st.divider()
         
-        # Prioridade 2: Hoje
         if not tarefas_hoje.empty:
             st.subheader("📝 Tarefas do Dia")
             for i, row in tarefas_hoje.iterrows():
                 render_cartao_tarefa(row, "hoje", hoje)
         elif atrasadas.empty:
-            st.success("🎉 Tudo limpo por hoje! Aproveite para adiantar matérias no Cronograma.")
+            st.success("🎉 Tudo limpo por hoje!")
 
-    # --- 2. VISÃO FUTURA (COM GRADUAÇÃO DE DESEMPENHO) ---
+    # --- 2. FUTURO ---
     with tab_futuro:
         st.subheader("🔮 Próximas Revisões")
-        st.caption("Antecipe seus estudos classificando seu domínio atual sobre o tema.")
-        
-        # Filtra futuras
-        futuras = df[(df['data_agendada'].dt.date > hoje) & (df['status'] == 'Pendente')].sort_values('data_agendada')
+        futuras = df_pendente[df_pendente['data_agendada'].dt.date > hoje].sort_values('data_agendada')
         
         if futuras.empty:
             st.info("Nada agendado para o futuro próximo.")
         else:
-            # Agrupa por data para ficar organizado
             datas_unicas = futuras['data_agendada'].dt.date.unique()
+            # Limita a exibição inicial para não travar se tiver mil revisões futuras
+            # Mostra os próximos 30 dias com revisões
+            MAX_DAYS_SHOW = 15
             
-            for d in datas_unicas:
-                # Header da Data
+            for i, d in enumerate(datas_unicas):
+                if i >= MAX_DAYS_SHOW:
+                    st.caption(f"E mais {len(datas_unicas) - MAX_DAYS_SHOW} dias com revisões...")
+                    break
+                    
                 delta = (d - hoje).days
                 label_dia = f"Amanhã" if delta == 1 else f"Daqui a {delta} dias"
-                st.markdown(f"##### {d.strftime('%d/%m/%Y')} ({label_dia})")
                 
-                # Tarefas daquela data
-                tarefas_d = futuras[futuras['data_agendada'].dt.date == d]
-                for _, row in tarefas_d.iterrows():
-                    render_cartao_tarefa_futura_completo(row, "futuro")
-                st.divider()
+                with st.expander(f"📅 {d.strftime('%d/%m/%Y')} ({label_dia}) - {len(futuras[futuras['data_agendada'].dt.date == d])} tarefas", expanded=(i<3)):
+                    tarefas_d = futuras[futuras['data_agendada'].dt.date == d]
+                    for _, row in tarefas_d.iterrows():
+                        render_cartao_tarefa_futura_completo(row, "futuro")
 
-    # --- 3. VISÃO SEMANAL (VISUAL COMPLETO) ---
+    # --- 3. SEMANA ---
     with tab_semana:
-        c_nav1, c_nav2, c_nav3 = st.columns([1, 6, 1])
+        c1, c2, c3 = st.columns([1, 6, 1])
+        if c1.button("◀ Ant", key="pw"): st.session_state.agenda_week_offset -= 1; st.rerun()
+        if c3.button("Prox ▶", key="nw"): st.session_state.agenda_week_offset += 1; st.rerun()
         
-        # Botões de Navegação
-        def prev_week(): st.session_state.agenda_week_offset -= 1
-        def next_week(): st.session_state.agenda_week_offset += 1
-        
-        c_nav1.button("◀ Ant", on_click=prev_week, key="btn_prev_week")
-        c_nav3.button("Prox ▶", on_click=next_week, key="btn_next_week")
-        
-        # Calcula datas
         start_week = hoje - timedelta(days=hoje.weekday()) + timedelta(weeks=st.session_state.agenda_week_offset)
         end_week = start_week + timedelta(days=6)
         
-        c_nav2.markdown(f"<div style='text-align:center; font-weight:bold; font-size: 1.1em'>{start_week.strftime('%d/%m')} - {end_week.strftime('%d/%m')}</div>", unsafe_allow_html=True)
+        c2.markdown(f"<div style='text-align:center; font-weight:bold; font-size:1.1em'>{start_week.strftime('%d/%m')} - {end_week.strftime('%d/%m')}</div>", unsafe_allow_html=True)
+        
+        # Filtra dataframe para a semana inteira de uma vez (muito mais rápido que filtrar dia a dia dentro do loop)
+        # Convertendo start_week e end_week para datetime64 para comparação eficiente
+        mask_week = (df['data_agendada'].dt.date >= start_week) & (df['data_agendada'].dt.date <= end_week)
+        df_week = df[mask_week]
         
         cols = st.columns(7)
-        days = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+        days_names = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
         
-        for i, d_name in enumerate(days):
+        for i, d_name in enumerate(days_names):
             d_date = start_week + timedelta(days=i)
-            tasks = df[df['data_agendada'].dt.date == d_date]
+            # Filtro rápido local
+            tasks = df_week[df_week['data_agendada'].dt.date == d_date]
             
             with cols[i]:
-                # Estilo do Cabeçalho
                 bg_head = "#ffebee" if d_date == hoje else "#f0f2f6"
                 color_head = "red" if d_date == hoje else "black"
                 
-                # Container do dia
                 with st.container(border=True):
                     st.markdown(
                         f"<div style='background-color:{bg_head}; color:{color_head}; text-align:center; border-radius:4px; padding:2px; margin-bottom:5px'>"
@@ -119,55 +127,60 @@ def render_agenda(conn_ignored):
                         unsafe_allow_html=True
                     )
                     
-                    # Lista de tarefas com nome completo
-                    for _, t in tasks.iterrows():
-                        cor_status = "red" if t['status'] == 'Pendente' and d_date < hoje else "blue"
-                        if t['status'] == 'Concluido': cor_status = "green"
-                        
-                        bg_card = "#ffffff"
-                        
-                        # Renderiza cartãozinho visual
-                        st.markdown(
-                            f"""
-                            <div style='
-                                font-size:0.8em; 
-                                background-color:{bg_card}; 
-                                border-left:3px solid {cor_status}; 
-                                padding:4px; 
-                                margin-bottom:4px; 
-                                border-radius: 2px;
-                                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-                                line-height: 1.2;
-                            ' title='{t['assunto_nome']}'>
-                            {t['assunto_nome']}
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
+                    if tasks.empty:
+                        st.caption("-")
+                    else:
+                        for _, t in tasks.iterrows():
+                            cor_status = "red" if t['status'] == 'Pendente' and d_date < hoje else "blue"
+                            if t['status'] == 'Concluido': cor_status = "green"
+                            
+                            # Renderiza cartão simplificado
+                            st.markdown(
+                                f"""
+                                <div style='
+                                    font-size:0.75em; 
+                                    background-color:white; 
+                                    border-left:3px solid {cor_status}; 
+                                    padding:3px; 
+                                    margin-bottom:3px; 
+                                    border-radius: 2px;
+                                    line-height: 1.1;
+                                    overflow:hidden;
+                                    white-space:nowrap;
+                                    text-overflow:ellipsis;
+                                ' title='{t['assunto_nome']}'>
+                                {t['assunto_nome']}
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
 
-    # --- 4. VISÃO MENSAL ---
+    # --- 4. MÊS ---
     with tab_mes:
-        # Navegação Mês
-        cm1, cm2, cm3 = st.columns([1, 6, 1])
-        def prev_month(): st.session_state.agenda_month_offset -= 1
-        def next_month(): st.session_state.agenda_month_offset += 1
+        c1, c2, c3 = st.columns([1, 6, 1])
+        if c1.button("◀", key="pm"): st.session_state.agenda_month_offset -= 1; st.rerun()
+        if c3.button("▶", key="nm"): st.session_state.agenda_month_offset += 1; st.rerun()
         
-        cm1.button("◀", on_click=prev_month, key="btn_prev_month")
-        cm3.button("▶", on_click=next_month, key="btn_next_month")
-        
-        # Lógica de Data do Mês
         curr_ref = hoje.replace(day=1)
-        target_month_idx = curr_ref.month - 1 + st.session_state.agenda_month_offset
-        year_target = curr_ref.year + target_month_idx // 12
-        month_target = target_month_idx % 12 + 1
+        tot_months = curr_ref.year * 12 + curr_ref.month - 1 + st.session_state.agenda_month_offset
+        y_target = tot_months // 12
+        m_target = tot_months % 12 + 1
         
-        cm2.markdown(f"<h4 style='text-align:center'>{calendar.month_name[month_target].capitalize()} {year_target}</h4>", unsafe_allow_html=True)
+        c2.markdown(f"<h4 style='text-align:center'>{calendar.month_name[m_target].capitalize()} {y_target}</h4>", unsafe_allow_html=True)
         
-        cal = calendar.monthcalendar(year_target, month_target)
+        cal = calendar.monthcalendar(y_target, m_target)
         
-        # Headers Dias
-        c_headers = st.columns(7)
-        for i, d in enumerate(days): c_headers[i].markdown(f"**{d}**")
+        # Filtro otimizado para o mês inteiro
+        start_month = date(y_target, m_target, 1)
+        # Hack simples para pegar o último dia do mês
+        if m_target == 12: end_month = date(y_target + 1, 1, 1) - timedelta(days=1)
+        else: end_month = date(y_target, m_target + 1, 1) - timedelta(days=1)
+        
+        mask_month = (df['data_agendada'].dt.date >= start_month) & (df['data_agendada'].dt.date <= end_month)
+        df_month = df[mask_month]
+        
+        cols_h = st.columns(7)
+        for i, d in enumerate(["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]): cols_h[i].markdown(f"**{d}**")
         
         for week in cal:
             c_days = st.columns(7)
@@ -176,32 +189,29 @@ def render_agenda(conn_ignored):
                     if d == 0:
                         st.write("")
                     else:
-                        dt_val = date(year_target, month_target, d)
-                        # Filtra tarefas do dia
-                        ts = df[df['data_agendada'].dt.date == dt_val]
+                        dt_val = date(y_target, m_target, d)
+                        # Filtro local no subset do mês
+                        ts = df_month[df_month['data_agendada'].dt.date == dt_val]
                         
-                        # Estilo
                         with st.container(border=True):
-                            if dt_val == hoje:
-                                st.markdown(f":red[**{d}**]")
-                            else:
-                                st.markdown(f"**{d}**")
+                            color_d = ":red" if dt_val == hoje else ""
+                            st.markdown(f"{color_d}[**{d}**]")
                                 
                             if not ts.empty:
                                 p = len(ts[ts['status']=='Pendente'])
                                 ok = len(ts[ts['status']=='Concluido'])
-                                
                                 if p > 0: st.markdown(f":red[● {p}]")
                                 if ok > 0: st.markdown(f":green[● {ok}]")
                                 
+                                # Popover leve apenas com lista
                                 with st.popover("Ver"):
                                     for _, t in ts.iterrows():
                                         icon = "⏳" if t['status'] == 'Pendente' else "✅"
-                                        st.write(f"{icon} {t['assunto_nome']}")
+                                        st.caption(f"{icon} {t['assunto_nome']}")
 
-    # --- 5. LISTA GERAL ---
+    # --- 5. LISTA ---
     with tab_lista:
-        filtro = st.radio("Filtrar:", ["Pendentes", "Concluídas", "Todas"], horizontal=True)
+        filtro = st.radio("Filtro:", ["Pendentes", "Concluídas", "Todas"], horizontal=True)
         df_v = df.copy()
         if filtro == "Pendentes": df_v = df_v[df_v['status']=='Pendente']
         elif filtro == "Concluídas": df_v = df_v[df_v['status']=='Concluido']
@@ -216,80 +226,41 @@ def render_agenda(conn_ignored):
             hide_index=True
         )
 
-# --- COMPONENTES VISUAIS ---
+# --- COMPONENTES ---
 
 def render_cartao_tarefa(row, key_suffix, hoje):
-    """Cartão Completo para Hoje/Atrasadas com Graduação de Desempenho"""
     with st.container(border=True):
         c1, c2, c3 = st.columns([0.6, 0.3, 0.1])
-        
         with c1:
             prefix = "🔴 " if row['data_agendada'].date() < hoje else ""
             st.markdown(f"**{prefix}{row['assunto_nome']}**")
             st.caption(f"{row['grande_area']} • {row['tipo']}")
-            if row['data_agendada'].date() < hoje:
-                st.caption(f"Original: {row['data_agendada'].strftime('%d/%m')}")
-        
         with c2:
-            # Popover de Revisão (SRS) com 4 Níveis
-            with st.popover("✅ Realizar Revisão", use_container_width=True):
-                st.markdown("### Como foi seu desempenho?")
-                st.caption("Isso definirá a próxima data de revisão.")
-                
-                c_bad, c_hard = st.columns(2)
-                if c_bad.button("😭 Muito Ruim", key=f"bad_{key_suffix}_{row['id']}", help="Errei muito. (Reset para 1 dia)", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
-                if c_hard.button("😕 Difícil", key=f"hard_{key_suffix}_{row['id']}", help="Acertei pouco. (Mantém intervalo)", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Ruim"); st.rerun()
-                    
-                c_good, c_easy = st.columns(2)
-                if c_good.button("🙂 Bom", key=f"good_{key_suffix}_{row['id']}", help="Acertei a maioria. (x1.5 dias)", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Bom"); st.rerun()
-                if c_easy.button("🤩 Excelente", key=f"easy_{key_suffix}_{row['id']}", help="Dominei! (x2.5 dias)", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
-                
-                st.divider()
-                if st.button("👑 Dominado", key=f"dom_{key_suffix}_{row['id']}", help="Conteúdo consolidado. (x3.0 dias)", use_container_width=True):
-                    # Para "Dominado", passamos 'Excelente' mas a lógica no DB pode ser ajustada para multiplicar mais
-                    # ou podemos passar uma string "Dominado" se o backend suportar. 
-                    # Assumindo que o backend suporta "Excelente" como o máximo padrão, usaremos ele.
-                    # Idealmente, atualizaríamos reagendar_inteligente para aceitar "Dominado".
-                    # Como não editamos database.py aqui, usamos "Excelente".
-                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
-
+            with st.popover("✅ Realizar"):
+                st.write("Desempenho:")
+                c_a, c_b = st.columns(2)
+                if c_a.button("😭 Ruim", key=f"bd_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
+                if c_b.button("😕 Difícil", key=f"hd_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Ruim"); st.rerun()
+                c_c, c_d = st.columns(2)
+                if c_c.button("🙂 Bom", key=f"gd_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Bom"); st.rerun()
+                if c_d.button("🤩 Ótimo", key=f"ex_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Excelente"); st.rerun()
         with c3:
-            if st.button("🗑️", key=f"del_{key_suffix}_{row['id']}", help="Excluir esta revisão"):
-                if excluir_revisao(row['id']):
-                    st.toast("Revisão excluída!")
-                    st.rerun()
+            if st.button("🗑️", key=f"dl_{key_suffix}_{row['id']}"): excluir_revisao(row['id']); st.rerun()
 
 def render_cartao_tarefa_futura_completo(row, key_suffix):
-    """Cartão Completo para Futuro (Permite Antecipar com Graduação)"""
     with st.container(border=True):
         c1, c2, c3 = st.columns([0.6, 0.2, 0.2])
-        
         with c1:
             st.markdown(f"**{row['assunto_nome']}**")
-            st.caption(f"{row['grande_area']} • Agendado para {row['data_agendada'].strftime('%d/%m')}")
-        
+            st.caption(f"{row['grande_area']} • {row['data_agendada'].strftime('%d/%m')}")
         with c2:
-            # Botão de Antecipar com Desempenho
             with st.popover("⚡ Antecipar"):
-                st.write("**Realizar hoje? Classifique:**")
-                st.caption("A nova data será calculada a partir de HOJE.")
-                
+                st.write("Realizar hoje?")
                 c_a, c_b = st.columns(2)
-                if c_a.button("Ruim", key=f"f_bad_{key_suffix}_{row['id']}", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
-                if c_b.button("Bom", key=f"f_good_{key_suffix}_{row['id']}", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Bom"); st.rerun()
-                    
+                if c_a.button("Ruim", key=f"fbd_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
+                if c_b.button("Bom", key=f"fgd_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Bom"); st.rerun()
                 c_c, c_d = st.columns(2)
-                if c_c.button("Excelente", key=f"f_exc_{key_suffix}_{row['id']}", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
-                if c_d.button("Dominado", key=f"f_dom_{key_suffix}_{row['id']}", use_container_width=True):
-                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
-        
+                if c_c.button("Excelente", key=f"fex_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Excelente"); st.rerun()
+                if c_d.button("Dominado", key=f"fdo_{key_suffix}_{row['id']}"): reagendar_inteligente(row['id'], "Excelente"); st.rerun()
         with c3:
-             if st.button("🗑️", key=f"f_del_{key_suffix}_{row['id']}"):
-                excluir_revisao(row['id']); st.rerun()
+             if st.button("🗑️", key=f"fdl_{key_suffix}_{row['id']}"): excluir_revisao(row['id']); st.rerun()
