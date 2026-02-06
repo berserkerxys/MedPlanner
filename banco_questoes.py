@@ -3,7 +3,7 @@ import streamlit.components.v1 as components
 
 def render_banco_questoes(conn_ignored):
     st.header("🏦 Banco de Questões - Hardworq")
-    st.caption("Acesse diretamente a plataforma de questões.")
+    st.caption("Acesse diretamente a plataforma de questões. Registre seu desempenho na barra lateral!")
     
     # URL do seu site externo
     # Certifique-se de que o site permite ser incorporado (X-Frame-Options)
