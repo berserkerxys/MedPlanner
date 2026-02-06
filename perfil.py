@@ -7,7 +7,8 @@ from database import (
     update_meta_diaria,
     get_progresso_hoje,
     get_dados_pessoais,
-    update_dados_pessoais
+    update_dados_pessoais,
+    resetar_conta_usuario # IMPORTANTE: Nova função importada
 )
 
 def render_perfil(conn_ignored):
@@ -15,21 +16,25 @@ def render_perfil(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
+    # Dados
     status, _ = get_status_gamer(u, nonce)
     total_q_global, conquistas, proximo_nivel = get_conquistas_e_stats(u)
     dados_pessoais = get_dados_pessoais(u)
     prog = get_progresso_hoje(u, nonce)
     
+    # Valor do banco
     meta_banco = int(status.get('meta_diaria', 50))
     if "pf_meta_slider" not in st.session_state:
         st.session_state.pf_meta_slider = meta_banco
 
+    # --- 1. CABEÇALHO ---
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 3, 2])
         with c1: st.markdown("# 👨‍⚕️")
         with c2:
             st.markdown(f"### Dr(a). {st.session_state.get('u_nome', u)}")
             st.markdown(f"**Rank:** {status['titulo']}")
+            
             nasc_str = dados_pessoais.get('nascimento')
             if nasc_str:
                 try:
@@ -41,7 +46,7 @@ def render_perfil(conn_ignored):
 
     st.divider()
     
-    # Configurações
+    # --- 2. CONFIGURAÇÕES ---
     st.subheader("⚙️ Configurações e Dados")
     tab_meta, tab_dados = st.tabs(["🎯 Meta Diária", "📝 Dados Pessoais"])
     
@@ -64,11 +69,14 @@ def render_perfil(conn_ignored):
         with st.form("f_dados"):
             c1, c2 = st.columns(2)
             em = c1.text_input("Email", value=dados_pessoais.get("email", ""))
+            
             dt_val = None
             if dados_pessoais.get("nascimento"):
                 try: dt_val = datetime.strptime(dados_pessoais['nascimento'], "%Y-%m-%d")
                 except: pass
+            
             nasc = c2.date_input("Nascimento", value=dt_val, format="DD/MM/YYYY")
+            
             if st.form_submit_button("💾 Salvar Dados"):
                 nasc_fmt = nasc.strftime("%Y-%m-%d") if nasc else None
                 if update_dados_pessoais(u, em, nasc_fmt):
@@ -79,6 +87,7 @@ def render_perfil(conn_ignored):
 
     st.divider()
     
+    # --- 3. TROFÉUS ---
     st.subheader("🏆 Sala de Troféus")
     perc_aprov = min(total_q_global / 20000, 1.0)
     st.progress(perc_aprov, text=f"Rumo à Aprovação (20k): {int(perc_aprov*100)}%")
@@ -97,11 +106,33 @@ def render_perfil(conn_ignored):
     
     st.divider()
     
+    # --- 4. ZONA DE PERIGO (COM RESET) ---
     with st.expander("🚨 Zona de Perigo"):
-        st.warning("Ações Críticas")
+        st.warning("Ações Críticas - Cuidado!")
         st.text_input("Usuário", value=u, disabled=True)
-        if st.button("Sair da Conta", type="primary"):
-            st.session_state.logado = False
-            for k in ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]:
-                if k in st.session_state: del st.session_state[k]
-            st.rerun()
+        
+        c_danger1, c_danger2 = st.columns(2)
+        
+        with c_danger1:
+            if st.button("Sair da Conta", type="primary", use_container_width=True):
+                st.session_state.logado = False
+                for k in ["sb_meta_slider", "pf_meta_slider", "video_limit", "chat_history"]:
+                    if k in st.session_state: del st.session_state[k]
+                st.rerun()
+        
+        with c_danger2:
+            # Botão de Reset com Confirmação
+            if st.button("⚠️ Resetar Conta (Apagar Tudo)", type="primary", use_container_width=True, help="Apaga todo seu progresso, histórico e revisões. Irreversível."):
+                # Armazena estado de confirmação na sessão para evitar clique acidental
+                st.session_state.confirm_reset = True
+            
+            if st.session_state.get("confirm_reset"):
+                st.error("Tem certeza? Todo o progresso será perdido para sempre.")
+                if st.button("Sim, apagar tudo e recomeçar", type="secondary", use_container_width=True):
+                    if resetar_conta_usuario(u):
+                        st.success("Conta resetada com sucesso!")
+                        time.sleep(1)
+                        st.session_state.confirm_reset = False
+                        st.rerun()
+                    else:
+                        st.error("Erro ao resetar conta.")
