@@ -20,7 +20,8 @@ def render_agenda(conn_ignored):
     hoje = datetime.now().date()
     
     # --- ABAS DE NAVEGAÇÃO ---
-    tab_hoje, tab_semana, tab_mes, tab_lista = st.tabs(["🔥 Foco Hoje", "🗓️ Semana", "📅 Mês", "📚 Lista Completa"])
+    # Adicionada a aba "🔮 Futuro"
+    tab_hoje, tab_semana, tab_futuro, tab_mes, tab_lista = st.tabs(["🔥 Foco Hoje", "🗓️ Semana", "🔮 Futuro", "📅 Mês", "📚 Lista Completa"])
 
     # --- 1. VISÃO DE HOJE (FOCO) ---
     with tab_hoje:
@@ -84,7 +85,6 @@ def render_agenda(conn_ignored):
                 
                 for _, t in tasks.iterrows():
                     bg = "#e3f2fd" if t['status'] == 'Pendente' else "#e8f5e9"
-                    border_color = "#2196f3" if t['status'] == 'Pendente' else "#4caf50"
                     icon = "⏳" if t['status'] == 'Pendente' else "✅"
                     
                     # Cartão clicável na semana (usando expander para detalhes)
@@ -93,16 +93,44 @@ def render_agenda(conn_ignored):
                         st.markdown(f"**{t['assunto_nome']}**")
                         
                         if t['status'] == 'Pendente':
-                            st.write("Revisar:")
+                            st.markdown("**Como foi?**")
+                            # Botões de Desempenho Compactos
                             c_s1, c_s2 = st.columns(2)
-                            if c_s1.button("👎", key=f"wk_bad_{t['id']}", help="Ruim"): 
+                            if c_s1.button("👎", key=f"wk_bad_{t['id']}", help="Ruim (Reset ou intervalo curto)"): 
                                 reagendar_inteligente(t['id'], "Ruim"); st.rerun()
-                            if c_s2.button("👍", key=f"wk_good_{t['id']}", help="Bom"): 
+                            if c_s2.button("👍", key=f"wk_good_{t['id']}", help="Bom (Aumenta intervalo)"): 
                                 reagendar_inteligente(t['id'], "Bom"); st.rerun()
+                            
+                            # Opção extra "Excelente" se quiser mais granularidade no popover
+                            if st.button("🌟 Dominei!", key=f"wk_exc_{t['id']}", use_container_width=True):
+                                reagendar_inteligente(t['id'], "Excelente"); st.rerun()
+                                
                         else:
                             st.caption("Concluído!")
 
-    # --- 3. VISÃO MENSAL (CALENDÁRIO GRADE) ---
+    # --- 3. VISÃO FUTURA (LISTA DE PREVISÃO) ---
+    with tab_futuro:
+        st.subheader("🔮 Previsão de Revisões Futuras")
+        st.caption("Aqui você vê o que está planejado para além da semana atual.")
+        
+        # Filtra apenas tarefas futuras (> hoje) e pendentes
+        futuras = df[(df['data_agendada'].dt.date > hoje) & (df['status'] == 'Pendente')].sort_values('data_agendada')
+        
+        if futuras.empty:
+            st.success("Nada pendente para o futuro próximo! Você está em dia.")
+        else:
+            # Agrupa por mês para facilitar a visualização
+            futuras['mes_ano'] = futuras['data_agendada'].dt.strftime('%B %Y')
+            meses_unicos = futuras['mes_ano'].unique()
+            
+            for mes in meses_unicos:
+                with st.expander(f"📅 {mes}", expanded=True):
+                    tarefas_mes = futuras[futuras['mes_ano'] == mes]
+                    
+                    for _, row in tarefas_mes.iterrows():
+                        render_cartao_tarefa_futura(row, "futuro")
+
+    # --- 4. VISÃO MENSAL (CALENDÁRIO GRADE) ---
     with tab_mes:
         if 'agenda_month_offset' not in st.session_state: st.session_state.agenda_month_offset = 0
         
@@ -113,21 +141,18 @@ def render_agenda(conn_ignored):
         
         # Calcula mês atual baseado no offset
         curr_date_ref = hoje.replace(day=1)
-        # Ajuste de meses
         total_months = curr_date_ref.year * 12 + curr_date_ref.month - 1 + st.session_state.agenda_month_offset
         year_target = total_months // 12
         month_target = total_months % 12 + 1
         
         cm2.markdown(f"<h3 style='text-align:center'>{calendar.month_name[month_target].capitalize()} {year_target}</h3>", unsafe_allow_html=True)
         
-        # Gera matriz do mês
         cal = calendar.monthcalendar(year_target, month_target)
         
-        # Cabeçalho Dias
         cols_h = st.columns(7)
+        days = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
         for i, d in enumerate(days): cols_h[i].markdown(f"**{d}**")
         
-        # Dias
         for week in cal:
             cols = st.columns(7)
             for i, day in enumerate(week):
@@ -136,11 +161,8 @@ def render_agenda(conn_ignored):
                         st.write("")
                     else:
                         d_date = date(year_target, month_target, day)
-                        # Filtra tarefas
                         t_day = df[df['data_agendada'].dt.date == d_date]
                         
-                        # Conteúdo do dia
-                        container_border = True
                         if d_date == hoje:
                             st.markdown(f"🔴 **{day}**")
                         else:
@@ -149,19 +171,15 @@ def render_agenda(conn_ignored):
                         if not t_day.empty:
                             pend = len(t_day[t_day['status'] == 'Pendente'])
                             done = len(t_day[t_day['status'] == 'Concluido'])
+                            if pend > 0: st.markdown(f":red[● {pend}]")
+                            if done > 0: st.markdown(f":green[● {done}]")
                             
-                            if pend > 0: 
-                                st.markdown(f"<span style='color:red'>● {pend} Pend</span>", unsafe_allow_html=True)
-                            if done > 0: 
-                                st.markdown(f"<span style='color:green'>● {done} OK</span>", unsafe_allow_html=True)
-                            
-                            # Pequeno expander para ver o que tem no dia
                             with st.popover("Ver"):
                                 for _, t in t_day.iterrows():
                                     icon = "⏳" if t['status'] == 'Pendente' else "✅"
                                     st.write(f"{icon} {t['assunto_nome']}")
 
-    # --- 4. LISTA COMPLETA ---
+    # --- 5. LISTA COMPLETA ---
     with tab_lista:
         c_filt1, c_filt2 = st.columns([1, 3])
         filtro = c_filt1.radio("Filtrar por Status:", ["Pendentes", "Concluídas", "Todas"], horizontal=False)
@@ -170,7 +188,6 @@ def render_agenda(conn_ignored):
         if filtro == "Pendentes": df_view = df_view[df_view['status'] == 'Pendente']
         elif filtro == "Concluídas": df_view = df_view[df_view['status'] == 'Concluido']
         
-        # Exibição Interativa
         st.dataframe(
             df_view[['data_agendada', 'assunto_nome', 'grande_area', 'tipo', 'status']].sort_values('data_agendada'),
             column_config={
@@ -183,8 +200,6 @@ def render_agenda(conn_ignored):
             use_container_width=True,
             hide_index=True
         )
-        
-        st.caption("Para excluir ou editar, utilize as abas 'Foco Hoje' ou 'Semana'.")
 
 def render_cartao_tarefa(row, key_suffix, hoje):
     """Renderiza um cartão individual de tarefa com ações completas de SRS"""
@@ -198,7 +213,6 @@ def render_cartao_tarefa(row, key_suffix, hoje):
                 st.markdown(":red[**ATRASADO**]")
         
         with c2:
-            # Botão principal que abre as opções de feedback
             with st.popover("✅ Realizar Revisão", use_container_width=True):
                 st.markdown("### Como foi seu desempenho?")
                 st.caption("Isso definirá a próxima data de revisão.")
@@ -220,3 +234,29 @@ def render_cartao_tarefa(row, key_suffix, hoje):
                 if excluir_revisao(row['id']):
                     st.toast("Revisão excluída!")
                     st.rerun()
+
+def render_cartao_tarefa_futura(row, key_suffix):
+    """Cartão simplificado para revisões futuras, permitindo antecipar"""
+    with st.container(border=True):
+        c1, c2, c3 = st.columns([0.6, 0.2, 0.2])
+        
+        with c1:
+            dt_str = row['data_agendada'].strftime('%d/%m/%Y')
+            st.markdown(f"**{dt_str}** - {row['assunto_nome']}")
+            st.caption(f"{row['grande_area']}")
+        
+        with c2:
+            # Permite antecipar a revisão usando a mesma lógica de desempenho
+            with st.popover("⚡ Antecipar"):
+                st.write("Deseja realizar esta revisão hoje?")
+                st.caption("Informe seu desempenho:")
+                
+                c_a, c_b = st.columns(2)
+                if c_a.button("👍 Bom", key=f"fut_good_{key_suffix}_{row['id']}"):
+                    reagendar_inteligente(row['id'], "Bom"); st.rerun()
+                if c_b.button("🤩 Ótimo", key=f"fut_exc_{key_suffix}_{row['id']}"):
+                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
+        
+        with c3:
+            if st.button("🗑️", key=f"fut_del_{key_suffix}_{row['id']}"):
+                excluir_revisao(row['id']); st.rerun()
