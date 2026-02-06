@@ -13,9 +13,9 @@ from database import (
 # Configuração Visual
 PRIORIDADES_STYLE = {
     "Diamante": {"icon": "💎", "color": "#9C27B0", "bg": "#F3E5F5", "label": "Diamante"},
-    "Vermelho": {"icon": "🔴", "color": "#D32F2F", "bg": "#FFEBEE", "label": "Alta"},
+    "Vermelho": {"icon": "🔴", "color": "#D32F2F", "bg": "#FFEBEE", "label": "Baixa"},
     "Amarelo":  {"icon": "🟡", "color": "#FBC02D", "bg": "#FFFDE7", "label": "Média"},
-    "Verde":    {"icon": "🟢", "color": "#388E3C", "bg": "#E8F5E9", "label": "Baixa"},
+    "Verde":    {"icon": "🟢", "color": "#388E3C", "bg": "#E8F5E9", "label": "Alta"},
     "Normal":   {"icon": "⚪", "color": "#757575", "bg": "#F5F5F5", "label": "Normal"}
 }
 
@@ -75,10 +75,10 @@ def render_cronograma(conn_ignored):
     # --- AVISO DE PRIORIDADES (LEGENDA) ---
     st.info(
         "**Legenda de Prioridades:**\n\n"
-        "💎 **Diamante:** Temas Essenciais (Reta Final) | "
-        "🔴 **Vermelha:** Alta Importância | "
+        "💎 **Diamante:** Temas Essenciais (assistir primeiro) | "
+        "🟢 **Verde:** Alta Importância"
         "🟡 **Amarela:** Média Importância | "
-        "🟢 **Verde:** Baixa Importância / Base"
+        "🔴 **Vermelha:** Menos cobrados | "
     )
     
     st.caption("Acompanhe o cumprimento das metas de Pré e Pós aula.")
