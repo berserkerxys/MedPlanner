@@ -20,9 +20,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Gerenciador de Cookies
-# Removido @st.cache_resource para evitar CachedWidgetWarning e erros de widget dentro de cache
+# REMOVIDO: @st.cache_resource para evitar CachedWidgetWarning e StreamlitDuplicateElementKey
+# O CookieManager deve ser instanciado diretamente no script principal
 def get_cookie_manager():
-    return stx.CookieManager()
+    return stx.CookieManager(key="cookie_manager_main")
 
 cookie_manager = get_cookie_manager()
 
@@ -65,6 +66,8 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
+            # Força rerun para atualizar a interface com o estado logado
+            st.rerun()
             return True
         except:
             return False
