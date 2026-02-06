@@ -3,7 +3,7 @@ import streamlit as st
 import traceback
 import sys
 import time
-import extra_streamlit_components as stx  # Biblioteca essencial para cookies
+import extra_streamlit_components as stx
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
@@ -19,9 +19,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Gerenciador de Cookies (CORRIGIDO: Removido @st.cache_resource para evitar erro)
+# --- GERENCIADOR DE COOKIES ---
+# IMPORTANTE: Não use @st.cache_resource aqui. O CookieManager deve ser criado na execução.
+# Usamos uma chave única para evitar conflitos de 'Duplicate Key'.
 def get_cookie_manager():
-    return stx.CookieManager()
+    return stx.CookieManager(key="app_main_cookie_manager")
 
 cookie_manager = get_cookie_manager()
 
@@ -53,7 +55,7 @@ if not _import_ok:
 
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
-    # Tenta ler o cookie de autenticação
+    # Pequeno delay para garantir que o componente JS carregou
     time.sleep(0.1)
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
@@ -63,6 +65,7 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
+            st.rerun() # Recarrega para aplicar o estado logado imediatamente
             return True
         except:
             return False
@@ -96,7 +99,9 @@ def fazer_login(u, nome_real):
 def fazer_logout():
     st.session_state.logado = False
     st.session_state.username = "guest"
+    # Remove o cookie
     cookie_manager.delete("medplanner_auth")
+    time.sleep(0.1)
     st.rerun()
 
 def render_resumos_ui(u):
