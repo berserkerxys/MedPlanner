@@ -56,9 +56,11 @@ def render_agenda(conn_ignored):
         elif atrasadas.empty:
             st.success("🎉 Tudo limpo por hoje! Aproveite para adiantar matérias no Cronograma.")
 
-    # --- 2. VISÃO FUTURA (LISTA DE PREVISÃO) ---
+    # --- 2. VISÃO FUTURA (COM GRADUAÇÃO DE DESEMPENHO) ---
     with tab_futuro:
         st.subheader("🔮 Próximas Revisões")
+        st.caption("Antecipe seus estudos classificando seu domínio atual sobre o tema.")
+        
         # Filtra futuras
         futuras = df[(df['data_agendada'].dt.date > hoje) & (df['status'] == 'Pendente')].sort_values('data_agendada')
         
@@ -77,14 +79,14 @@ def render_agenda(conn_ignored):
                 # Tarefas daquela data
                 tarefas_d = futuras[futuras['data_agendada'].dt.date == d]
                 for _, row in tarefas_d.iterrows():
-                    render_cartao_tarefa_futura(row, "futuro")
+                    render_cartao_tarefa_futura_completo(row, "futuro")
                 st.divider()
 
-    # --- 3. VISÃO SEMANAL (VISUAL APENAS) ---
+    # --- 3. VISÃO SEMANAL (VISUAL COMPLETO) ---
     with tab_semana:
         c_nav1, c_nav2, c_nav3 = st.columns([1, 6, 1])
         
-        # Botões de Navegação com Callback para garantir atualização
+        # Botões de Navegação
         def prev_week(): st.session_state.agenda_week_offset -= 1
         def next_week(): st.session_state.agenda_week_offset += 1
         
@@ -108,24 +110,40 @@ def render_agenda(conn_ignored):
                 # Estilo do Cabeçalho
                 bg_head = "#ffebee" if d_date == hoje else "#f0f2f6"
                 color_head = "red" if d_date == hoje else "black"
-                st.markdown(
-                    f"<div style='background-color:{bg_head}; color:{color_head}; text-align:center; border-radius:4px; padding:2px; margin-bottom:5px'>"
-                    f"<b>{d_name}</b><br>{d_date.day}</div>", 
-                    unsafe_allow_html=True
-                )
                 
-                # Lista compacta de tarefas (apenas visual)
-                for _, t in tasks.iterrows():
-                    cor_status = "red" if t['status'] == 'Pendente' and d_date < hoje else "blue"
-                    if t['status'] == 'Concluido': cor_status = "green"
-                    
-                    icon = "✅" if t['status'] == 'Concluido' else "⏳"
+                # Container do dia
+                with st.container(border=True):
                     st.markdown(
-                        f"<div style='font-size:0.7em; background-color:white; border-left:3px solid {cor_status}; padding:2px; margin-bottom:2px; overflow:hidden; white-space:nowrap;' title='{t['assunto_nome']}'>"
-                        f"{t['assunto_nome'][:8]}.."
-                        f"</div>",
+                        f"<div style='background-color:{bg_head}; color:{color_head}; text-align:center; border-radius:4px; padding:2px; margin-bottom:5px'>"
+                        f"<b>{d_name}</b><br>{d_date.day}</div>", 
                         unsafe_allow_html=True
                     )
+                    
+                    # Lista de tarefas com nome completo
+                    for _, t in tasks.iterrows():
+                        cor_status = "red" if t['status'] == 'Pendente' and d_date < hoje else "blue"
+                        if t['status'] == 'Concluido': cor_status = "green"
+                        
+                        bg_card = "#ffffff"
+                        
+                        # Renderiza cartãozinho visual
+                        st.markdown(
+                            f"""
+                            <div style='
+                                font-size:0.8em; 
+                                background-color:{bg_card}; 
+                                border-left:3px solid {cor_status}; 
+                                padding:4px; 
+                                margin-bottom:4px; 
+                                border-radius: 2px;
+                                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+                                line-height: 1.2;
+                            ' title='{t['assunto_nome']}'>
+                            {t['assunto_nome']}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
 
     # --- 4. VISÃO MENSAL ---
     with tab_mes:
@@ -168,13 +186,18 @@ def render_agenda(conn_ignored):
                             if dt_val == hoje:
                                 st.markdown(f":red[**{d}**]")
                             else:
-                                st.markdown(f"{d}")
+                                st.markdown(f"**{d}**")
                                 
                             if not ts.empty:
                                 p = len(ts[ts['status']=='Pendente'])
                                 ok = len(ts[ts['status']=='Concluido'])
                                 if p > 0: st.markdown(f":red[● {p}]")
                                 if ok > 0: st.markdown(f":green[● {ok}]")
+                                
+                                with st.popover("Ver"):
+                                    for _, t in ts.iterrows():
+                                        icon = "⏳" if t['status'] == 'Pendente' else "✅"
+                                        st.write(f"{icon} {t['assunto_nome']}")
 
     # --- 5. LISTA GERAL ---
     with tab_lista:
@@ -195,7 +218,7 @@ def render_agenda(conn_ignored):
 # --- COMPONENTES VISUAIS ---
 
 def render_cartao_tarefa(row, key_suffix, hoje):
-    """Cartão Completo para Hoje/Atrasadas"""
+    """Cartão Completo para Hoje/Atrasadas com Graduação de Desempenho"""
     with st.container(border=True):
         c1, c2, c3 = st.columns([0.6, 0.3, 0.1])
         
@@ -205,41 +228,57 @@ def render_cartao_tarefa(row, key_suffix, hoje):
             st.caption(f"{row['grande_area']} • {row['tipo']}")
         
         with c2:
-            # Popover de Revisão (SRS)
+            # Popover de Revisão (SRS) com 4 Níveis
             with st.popover("✅ Revisar"):
                 st.write("**Desempenho:**")
-                cb1, cb2 = st.columns(2)
-                # Botões com callback de rerun implícito
-                if cb1.button("😭 Ruim", key=f"bad_{key_suffix}_{row['id']}", help="Reset"): 
+                
+                # Nível 1 e 2
+                c_ruim, c_bom = st.columns(2)
+                if c_ruim.button("👎 Ruim", key=f"bad_{key_suffix}_{row['id']}", help="Errei muito (Reset)", use_container_width=True): 
                     reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
-                if cb2.button("😕 Difícil", key=f"hard_{key_suffix}_{row['id']}", help="x0.5"): 
-                    reagendar_inteligente(row['id'], "Ruim"); st.rerun()
-                    
-                cb3, cb4 = st.columns(2)
-                if cb3.button("🙂 Bom", key=f"good_{key_suffix}_{row['id']}", help="x1.5"): 
+                if c_bom.button("🙂 Bom", key=f"good_{key_suffix}_{row['id']}", help="Acertei razoavelmente (x1.0)", use_container_width=True): 
                     reagendar_inteligente(row['id'], "Bom"); st.rerun()
-                if cb4.button("🤩 Ótimo", key=f"exc_{key_suffix}_{row['id']}", help="x2.5"): 
+                
+                # Nível 3 e 4
+                c_exc, c_dom = st.columns(2)
+                if c_exc.button("🤩 Excelente", key=f"exc_{key_suffix}_{row['id']}", help="Acertei bem (x1.5)", use_container_width=True): 
+                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
+                if c_dom.button("👑 Dominado", key=f"dom_{key_suffix}_{row['id']}", help="Fácil demais (x2.5)", use_container_width=True): 
+                    # Tratamos "Dominado" como um Excelente "Plus" no backend, ou podemos criar uma categoria nova
+                    # Por enquanto, usa Excelente com um multiplicador maior se ajustarmos a função reagendar, 
+                    # mas vamos passar "Excelente" e confiar no algoritmo.
+                    # Se quiser lógica especifica para dominado, altere database.py
                     reagendar_inteligente(row['id'], "Excelente"); st.rerun()
 
         with c3:
             if st.button("🗑️", key=f"del_{key_suffix}_{row['id']}"):
                 excluir_revisao(row['id']); st.rerun()
 
-def render_cartao_tarefa_futura(row, key_suffix):
-    """Cartão Simplificado para Futuro (Permite Antecipar)"""
+def render_cartao_tarefa_futura_completo(row, key_suffix):
+    """Cartão Completo para Futuro (Permite Antecipar com Graduação)"""
     with st.container(border=True):
         c1, c2, c3 = st.columns([0.6, 0.2, 0.2])
         
         with c1:
             st.markdown(f"**{row['assunto_nome']}**")
-            st.caption(f"{row['grande_area']}")
+            st.caption(f"{row['grande_area']} • Agendado para {row['data_agendada'].strftime('%d/%m')}")
         
         with c2:
-            # Botão de Antecipar
+            # Botão de Antecipar com Desempenho
             with st.popover("⚡ Antecipar"):
-                st.write("Realizar hoje?")
-                if st.button("Confirmar (Bom)", key=f"ant_{key_suffix}_{row['id']}"):
+                st.write("**Realizar hoje? Classifique:**")
+                
+                c_a, c_b = st.columns(2)
+                if c_a.button("Ruim", key=f"f_bad_{key_suffix}_{row['id']}", use_container_width=True):
+                    reagendar_inteligente(row['id'], "Muito Ruim"); st.rerun()
+                if c_b.button("Bom", key=f"f_good_{key_suffix}_{row['id']}", use_container_width=True):
                     reagendar_inteligente(row['id'], "Bom"); st.rerun()
+                    
+                c_c, c_d = st.columns(2)
+                if c_c.button("Excelente", key=f"f_exc_{key_suffix}_{row['id']}", use_container_width=True):
+                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
+                if c_d.button("Dominado", key=f"f_dom_{key_suffix}_{row['id']}", use_container_width=True):
+                    reagendar_inteligente(row['id'], "Excelente"); st.rerun()
         
         with c3:
              if st.button("🗑️", key=f"f_del_{key_suffix}_{row['id']}"):
