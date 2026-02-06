@@ -8,3 +8,4 @@ plotly
 supabase
 google-generativeai
 groq
+extra-streamlit-components

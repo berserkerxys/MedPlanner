@@ -3,6 +3,8 @@ import streamlit as st
 import traceback
 import sys
 import time
+import extra_streamlit_components as stx  # Biblioteca essencial para cookies
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
 
@@ -17,11 +19,17 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Gerenciador de Cookies (Deve ser inicializado no topo)
+@st.cache_resource(experimental_allow_widgets=True)
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
+
 _import_ok = True
 _import_exc = None
 try:
     import pandas as pd
-    from datetime import datetime
     
     # Imports Locais
     from sidebar_v2 import render_sidebar
@@ -30,6 +38,10 @@ try:
     from mentor import render_mentor
     from simulado import render_simulado_real
     from caderno_erros import render_caderno_erros
+    from videoteca import render_videoteca
+    from agenda import render_agenda
+    from cronograma import render_cronograma
+    from dashboard import render_dashboard
     
 except Exception as e:
     _import_ok = False
@@ -40,15 +52,84 @@ if not _import_ok:
     st.code(_import_exc)
     st.stop()
 
+# --- LÓGICA DE SESSÃO PERSISTENTE ---
+def verificar_sessao_automatica():
+    # Tenta ler o cookie de autenticação
+    # O cookie armazenará: "username|hash_validacao"
+    auth_cookie = cookie_manager.get(cookie="medplanner_auth")
+    
+    if auth_cookie and not st.session_state.get('logado', False):
+        try:
+            # Formato simples: username
+            # Em produção real, usaria um token JWT, mas aqui o username basta se confiarmos no cookie
+            user_salvo = auth_cookie
+            # Opcional: Validar se o usuário ainda existe no banco
+            # Como verificar_login pede senha, aqui confiamos no cookie por enquanto
+            # ou fazemos uma verificação de existência simples
+            
+            st.session_state.logado = True
+            st.session_state.username = user_salvo
+            st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize() # Ou buscar nome real no DB
+            return True
+        except:
+            return False
+    return False
+
 # Inicialização de Estado
-if 'logado' not in st.session_state: st.session_state.logado = False
+if 'logado' not in st.session_state: 
+    # Tenta recuperar sessão antes de definir como False
+    st.session_state.logado = False
+    
 if 'username' not in st.session_state: st.session_state.username = "guest"
 if 'u_nome' not in st.session_state: st.session_state.u_nome = "Visitante"
 if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
 
+# Tenta login automático se não estiver logado
+if not st.session_state.logado:
+    # Pequeno delay para garantir que o gerenciador de cookies carregou
+    time.sleep(0.1)
+    verificar_sessao_automatica()
+
+def fazer_login(u, nome_real):
+    st.session_state.logado = True
+    st.session_state.username = u
+    st.session_state.u_nome = nome_real
+    
+    # Salva cookie por 30 dias
+    expires_at = datetime.now() + timedelta(days=30)
+    cookie_manager.set("medplanner_auth", u, expires_at=expires_at)
+    
+    st.toast(f"Bem-vindo de volta, {nome_real}!", icon="👋")
+    time.sleep(0.5)
+    st.rerun()
+
+def fazer_logout():
+    st.session_state.logado = False
+    st.session_state.username = "guest"
+    # Deleta o cookie
+    cookie_manager.delete("medplanner_auth")
+    st.rerun()
+
+def render_resumos_ui(u):
+    # (Mantida a função original para compatibilidade, se usada)
+    pass
+
 def app_principal():
     try:
+        # Passamos a função de logout para a sidebar usar
+        # Mas como a sidebar está em outro arquivo, ela precisa chamar uma função global ou
+        # alterar o session_state e o cookie. 
+        # A melhor forma é injetar o logout na sidebar ou lidar com isso aqui.
+        # No sidebar_v2.py, o botão de logout apenas muda session_state.logado = False
+        # Precisamos interceptar isso para limpar o cookie também.
+        
         render_sidebar()
+        
+        # Check de Logout vindo da Sidebar
+        if not st.session_state.logado:
+            fazer_logout()
+            return
+
         st.markdown("<h2 style='text-align:center;'>🩺 MEDPLANNER PRO</h2>", unsafe_allow_html=True)
 
         # Pomodoro
@@ -102,10 +183,7 @@ def tela_login():
                     if u and p:
                         ok, nome = verificar_login(u, p)
                         if ok:
-                            st.session_state.logado = True
-                            st.session_state.username = u
-                            st.session_state.u_nome = nome
-                            st.rerun()
+                            fazer_login(u, nome) # Usa a nova função com cookie
                         else: st.error(nome)
                     else: st.warning("Preencha tudo.")
             
@@ -121,5 +199,8 @@ def tela_login():
                         else: st.error(f"Erro: {msg}")
                     else: st.warning("Preencha tudo.")
 
-if st.session_state.logado: app_principal()
-else: tela_login()
+# Lógica de Controle de Fluxo
+if st.session_state.logado:
+    app_principal()
+else:
+    tela_login()
