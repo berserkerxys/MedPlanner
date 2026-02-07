@@ -144,6 +144,7 @@ def get_status_gamer(u, nonce=None):
     conn = get_db_connection()
     row = conn.execute("SELECT xp, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
     
+    # CORREÇÃO CRÍTICA: Garante que XP e Meta sejam inteiros, nunca None
     xp = int(row['xp']) if row and row['xp'] is not None else 0
     meta = int(row['meta_diaria']) if row and row['meta_diaria'] is not None else 50
     
@@ -157,6 +158,7 @@ def get_status_gamer(u, nonce=None):
     return status, df_m
 
 def get_benchmark_dados(u, df_user):
+    # Mock para evitar erro de importação
     return pd.DataFrame([{"Area": "Geral", "Tipo": "Você", "Performance": 70}, {"Area": "Geral", "Tipo": "Comunidade", "Performance": 65}])
 
 def get_progresso_hoje(u, n=None):
@@ -206,18 +208,21 @@ def resetar_conta_usuario(u):
 
 def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estudo="Pos-Aula", **kwargs):
     conn = get_db_connection()
-    dt = datetime.now().strftime("%Y-%m-%d")
+    dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     
+    # Garante normalização da área
     if not area_f:
         area_f = get_area_por_assunto(a)
     area = normalizar_area(area_f)
     
+    # Insere no histórico
     conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", 
                  (u, a, area, dt, int(ac), int(t), tipo_estudo))
     
-    # Atualiza cronograma
+    # Atualiza cronograma (aqui está a mágica!)
     atualizar_progresso_cronograma(u, a, ac, t, tipo_estudo)
 
+    # Agenda revisão se necessário
     if srs:
         dt_rev = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
         conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", 
@@ -228,6 +233,10 @@ def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estu
     return f"✅ Salvo em {area}!"
 
 def registrar_simulado(u, dados):
+    """
+    Registra um simulado completo, salvando cada área individualmente.
+    dados: {'Area': {'acertos': 10, 'total': 20}, ...}
+    """
     conn = get_db_connection()
     dt = datetime.now().strftime("%Y-%m-%d")
     
@@ -255,6 +264,7 @@ def listar_revisoes_completas(u, nonce=None):
     return pd.read_sql_query("SELECT * FROM revisoes WHERE usuario_id=?", conn, params=(u,))
 
 def concluir_revisao(rid, ac, tot):
+    # Registra como Pós-Aula para contar no progresso
     registrar_estudo(rid, "Revisão", ac, tot, tipo_estudo="Pos-Aula")
     return "✅ OK"
 
