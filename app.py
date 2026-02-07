@@ -21,7 +21,8 @@ st.markdown("""
 
 # Gerenciador de Cookies
 def get_cookie_manager():
-    return stx.CookieManager(key="cookie_manager_main")
+    # Adicionada chave única para evitar conflitos de recarregamento
+    return stx.CookieManager(key="cookie_manager_main_v4")
 
 cookie_manager = get_cookie_manager()
 
@@ -92,17 +93,25 @@ def fazer_login(u, nome_real):
     st.rerun()
 
 def fazer_logout():
+    """Centraliza a lógica de saída para evitar erros de widget."""
+    # 1. Altera o estado da sessão imediatamente
     st.session_state.logado = False
     st.session_state.username = "guest"
+    
+    # 2. Deleta o cookie do navegador
     cookie_manager.delete("medplanner_auth")
+    
+    # 3. Força a reinicialização para a tela de login
     st.rerun()
 
 def app_principal():
     try:
-        # CORREÇÃO: Passando o cookie_manager para a sidebar conseguir deletar o cookie no logout
+        # A sidebar pode disparar a mudança no st.session_state.logado
         render_sidebar(cookie_manager)
         
-        if not st.session_state.logado:
+        # VERIFICAÇÃO IMEDIATA: Se o usuário clicou em sair, interrompemos o código aqui.
+        # Isso evita que o render_perfil tente acessar o pf_meta_slider (o que causa o AttributeError)
+        if not st.session_state.get('logado', False):
             fazer_logout()
             return
 
@@ -121,23 +130,31 @@ def app_principal():
                 st.session_state["_pom_rem"] = max(0, st.session_state["_pom_rem"]-1)
                 time.sleep(1); st.rerun()
 
+        # Abas Principais
         abas = st.tabs([
             "📊 DASHBOARD", "🤖 MENTOR IA", "🏦 QUESTÕES", "🧠 ERROS", "⏱️ SIMULADO", 
             "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
         ])
         
-        with abas[0]: render_dashboard(None)
-        with abas[1]: render_mentor(None)
-        with abas[2]: render_banco_questoes(None)
-        with abas[3]: render_caderno_erros(None)
-        with abas[4]: render_simulado_real(None)
-        with abas[5]: render_agenda(None)
-        with abas[6]: render_videoteca(None)
-        with abas[7]: render_cronograma(None)
-        with abas[8]: render_perfil(None)
+        # Verificação redundante de segurança antes da renderização pesada
+        if st.session_state.get('logado', False):
+            with abas[0]: render_dashboard(None)
+            with abas[1]: render_mentor(None)
+            with abas[2]: render_banco_questoes(None)
+            with abas[3]: render_caderno_erros(None)
+            with abas[4]: render_simulado_real(None)
+            with abas[5]: render_agenda(None)
+            with abas[6]: render_videoteca(None)
+            with abas[7]: render_cronograma(None)
+            with abas[8]: render_perfil(None)
 
     except Exception:
-        st.error("Erro no app principal"); st.code(traceback.format_exc())
+        # Se um erro ocorrer durante o logout (comum com widgets), forçamos a limpeza total
+        if not st.session_state.get('logado', False):
+            fazer_logout()
+        else:
+            st.error("Erro no app principal")
+            st.code(traceback.format_exc())
 
 def tela_login():
     st.markdown("<br>", unsafe_allow_html=True)
