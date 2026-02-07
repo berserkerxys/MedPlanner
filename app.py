@@ -20,9 +20,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Gerenciador de Cookies
-# CORREÇÃO: Cache removido. O componente deve ser instanciado diretamente.
 def get_cookie_manager():
-    return stx.CookieManager(key="main_cookie_manager_v3")
+    return stx.CookieManager(key="cookie_manager_main")
 
 cookie_manager = get_cookie_manager()
 
@@ -55,7 +54,6 @@ if not _import_ok:
 
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
-    # Pequeno delay para garantir que o componente JS carregou
     time.sleep(0.1)
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
@@ -65,7 +63,7 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
-            st.rerun() # Recarrega para aplicar o estado logado
+            st.rerun()
             return True
         except:
             return False
@@ -87,11 +85,8 @@ def fazer_login(u, nome_real):
     st.session_state.logado = True
     st.session_state.username = u
     st.session_state.u_nome = nome_real
-    
-    # Salva cookie por 30 dias
     expires_at = datetime.now() + timedelta(days=30)
     cookie_manager.set("medplanner_auth", u, expires_at=expires_at)
-    
     st.toast(f"Bem-vindo de volta, {nome_real}!", icon="👋")
     time.sleep(0.5)
     st.rerun()
@@ -99,26 +94,20 @@ def fazer_login(u, nome_real):
 def fazer_logout():
     st.session_state.logado = False
     st.session_state.username = "guest"
-    # Remove o cookie
     cookie_manager.delete("medplanner_auth")
-    time.sleep(0.1)
     st.rerun()
-
-def render_resumos_ui(u):
-    pass
 
 def app_principal():
     try:
-        render_sidebar()
+        # CORREÇÃO: Passando o cookie_manager para a sidebar conseguir deletar o cookie no logout
+        render_sidebar(cookie_manager)
         
-        # Check de Logout vindo da Sidebar
         if not st.session_state.logado:
             fazer_logout()
             return
 
         st.markdown("<h2 style='text-align:center;'>🩺 MEDPLANNER PRO</h2>", unsafe_allow_html=True)
 
-        # Pomodoro
         with st.expander("⏲️ Foco Pomodoro", expanded=False):
             c1, c2, c3 = st.columns([1, 2, 1])
             with c2:
@@ -132,9 +121,8 @@ def app_principal():
                 st.session_state["_pom_rem"] = max(0, st.session_state["_pom_rem"]-1)
                 time.sleep(1); st.rerun()
 
-        # Abas Principais
         abas = st.tabs([
-            "📊 DASHBOARD", "🤖 MENTOR IA", "🏦 QUESTÕES", "🧠 CADERNO ERROS", "⏱️ SIMULADO", 
+            "📊 DASHBOARD", "🤖 MENTOR IA", "🏦 QUESTÕES", "🧠 ERROS", "⏱️ SIMULADO", 
             "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
         ])
         
@@ -143,12 +131,9 @@ def app_principal():
         with abas[2]: render_banco_questoes(None)
         with abas[3]: render_caderno_erros(None)
         with abas[4]: render_simulado_real(None)
-        with abas[5]: 
-            from agenda import render_agenda; render_agenda(None)
-        with abas[6]: 
-            from videoteca import render_videoteca; render_videoteca(None)
-        with abas[7]: 
-            from cronograma import render_cronograma; render_cronograma(None)
+        with abas[5]: render_agenda(None)
+        with abas[6]: render_videoteca(None)
+        with abas[7]: render_cronograma(None)
         with abas[8]: render_perfil(None)
 
     except Exception:
@@ -168,8 +153,7 @@ def tela_login():
                 if st.button("Acessar", type="primary", use_container_width=True):
                     if u and p:
                         ok, nome = verificar_login(u, p)
-                        if ok:
-                            fazer_login(u, nome)
+                        if ok: fazer_login(u, nome)
                         else: st.error(nome)
                     else: st.warning("Preencha tudo.")
             
@@ -185,7 +169,6 @@ def tela_login():
                         else: st.error(f"Erro: {msg}")
                     else: st.warning("Preencha tudo.")
 
-# Lógica de Controle de Fluxo
 if st.session_state.logado:
     app_principal()
 else:
