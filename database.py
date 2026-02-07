@@ -109,6 +109,27 @@ def resetar_revisoes_aula(u, aula):
         salvar_cronograma_status(u, estado)
     return True
 
+def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-Aula"):
+    """Atualiza APENAS os números no cronograma."""
+    estado = get_cronograma_status(u)
+    dados = estado.get(assunto, {
+        "feito": False, "prioridade": "Normal", 
+        "acertos_pre": 0, "total_pre": 0,
+        "acertos_pos": 0, "total_pos": 0
+    })
+    
+    if tipo_estudo == "Pre-Aula":
+        dados["acertos_pre"] = int(dados.get("acertos_pre", 0)) + int(acertos)
+        dados["total_pre"] = int(dados.get("total_pre", 0)) + int(total)
+    else: 
+        dados["acertos_pos"] = int(dados.get("acertos_pos", 0)) + int(acertos)
+        dados["total_pos"] = int(dados.get("total_pos", 0)) + int(total)
+    
+    if dados["total_pos"] > 0: dados["feito"] = True
+        
+    estado[assunto] = dados
+    salvar_cronograma_status(u, estado)
+
 # --- 5. FUNÇÕES DE PERFORMANCE E DASHBOARD ---
 @st.cache_data(ttl=60)
 def get_dados_graficos(u, nonce=None):
@@ -177,10 +198,52 @@ def resetar_conta_usuario(u):
 def registrar_estudo(u, a, ac, t, **kwargs):
     conn = get_db_connection()
     dt = datetime.now().strftime("%Y-%m-%d")
-    conn.execute("INSERT INTO historico (usuario_id, assunto_nome, acertos, total, data_estudo) VALUES (?,?,?,?,?)", (u, a, ac, t, dt))
+    
+    # Extrai tipo_estudo e srs dos kwargs ou define padrão
+    tipo_estudo = kwargs.get('tipo_estudo', 'Pos-Aula')
+    srs = kwargs.get('srs', False)
+    area_f = kwargs.get('area_f', None)
+
+    # Garante normalização da área
+    if not area_f:
+        area_f = get_area_por_assunto(a)
+    area = normalizar_area(area_f)
+    
+    # Insere no histórico
+    conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", 
+                 (u, a, area, dt, int(ac), int(t), tipo_estudo))
+    
+    # Atualiza cronograma
+    atualizar_progresso_cronograma(u, a, ac, t, tipo_estudo)
+
+    # Agenda revisão se necessário
+    if srs:
+        dt_rev = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", 
+                     (u, a, area, dt_rev, "1 Semana", "Pendente"))
+
     conn.commit()
     trigger_refresh()
-    return "Salvo"
+    return f"✅ Salvo em {area}!"
+
+def registrar_simulado(u, dados):
+    """
+    Registra um simulado completo, salvando cada área individualmente.
+    dados: {'Area': {'acertos': 10, 'total': 20}, ...}
+    """
+    conn = get_db_connection()
+    dt = datetime.now().strftime("%Y-%m-%d")
+    
+    for area, valores in dados.items():
+        if int(valores['total']) > 0:
+            conn.execute(
+                "INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)",
+                (u, f"Simulado - {area}", normalizar_area(area), dt, int(valores['acertos']), int(valores['total']), "Simulado")
+            )
+    
+    conn.commit()
+    trigger_refresh()
+    return "✅ Simulado Salvo!"
 
 def update_meta_diaria(u, m):
     conn = get_db_connection()
@@ -189,6 +252,42 @@ def update_meta_diaria(u, m):
     return True
 
 def get_conquistas_e_stats(u): return 0, [], None
+
+def listar_revisoes_completas(u, nonce=None):
+    conn = get_db_connection()
+    return pd.read_sql_query("SELECT * FROM revisoes WHERE usuario_id=?", conn, params=(u,))
+
+def concluir_revisao(rid, ac, tot):
+    # Registra como Pós-Aula para contar no progresso
+    registrar_estudo(rid, "Revisão", ac, tot, tipo_estudo="Pos-Aula")
+    return "✅ OK"
+
+def excluir_revisao(rid):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM revisoes WHERE id=?", (rid,))
+    conn.commit()
+    trigger_refresh()
+
+def reagendar_inteligente(rid, desempenho):
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    rev = conn.execute("SELECT * FROM revisoes WHERE id=?", (rid,)).fetchone()
+    if not rev: return
+    
+    conn.execute("UPDATE revisoes SET status='Concluido' WHERE id=?", (rid,))
+    fator = {"Excelente": 2.5, "Bom": 1.5, "Ruim": 0.5, "Muito Ruim": 0}.get(desempenho, 1.0)
+    intervalo = 7 # Simplificado
+    nova_data = (datetime.now() + timedelta(days=max(1, int(intervalo * fator)))).strftime("%Y-%m-%d")
+    
+    conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)",
+                 (rev['usuario_id'], rev['assunto_nome'], rev['grande_area'], nova_data, "SRS", "Pendente"))
+    conn.commit()
+    trigger_refresh()
+
+# Stubs para compatibilidade
+def listar_conteudo_videoteca(): return pd.DataFrame()
+def pesquisar_global(t): return pd.DataFrame()
+def get_db(): return True
 
 # --- SUPABASE STUBS (MANTIDOS PARA COMPATIBILIDADE) ---
 # Se não estiver usando Supabase, estas funções evitam erros de importação
