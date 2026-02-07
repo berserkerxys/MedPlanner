@@ -3,7 +3,7 @@ import streamlit as st
 import traceback
 import sys
 import time
-import extra_streamlit_components as stx  # Biblioteca essencial para cookies
+import extra_streamlit_components as stx
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
@@ -20,9 +20,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Gerenciador de Cookies
-# REMOVIDO @st.cache_resource: Widgets não devem ser cacheados dessa forma.
+# CORREÇÃO CRÍTICA: Removido @st.cache_resource com parâmetro inválido.
+# O CookieManager é instanciado diretamente com uma chave única.
 def get_cookie_manager():
-    return stx.CookieManager(key="app_main_cookie_manager")
+    return stx.CookieManager(key="main_cookie_manager_v2")
 
 cookie_manager = get_cookie_manager()
 
@@ -42,7 +43,6 @@ try:
     from agenda import render_agenda
     from cronograma import render_cronograma
     from dashboard import render_dashboard
-    from banco_questoes import render_banco_questoes
     
 except Exception as e:
     _import_ok = False
@@ -55,6 +55,7 @@ if not _import_ok:
 
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
+    # Pequeno delay para garantir que o componente JS carregou
     time.sleep(0.1)
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
@@ -64,7 +65,7 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
-            st.rerun() 
+            st.rerun() # Recarrega para aplicar o estado logado
             return True
         except:
             return False
@@ -98,6 +99,7 @@ def fazer_login(u, nome_real):
 def fazer_logout():
     st.session_state.logado = False
     st.session_state.username = "guest"
+    # Remove o cookie
     cookie_manager.delete("medplanner_auth")
     time.sleep(0.1)
     st.rerun()
@@ -132,22 +134,22 @@ def app_principal():
 
         # Abas Principais
         abas = st.tabs([
-            "📊 DASHBOARD", "🤖 MENTOR IA", "🏦 QUESTÕES", "🧠 CADERNO ERROS", "⏱️ SIMULADO", 
+            "📊 DASHBOARD", "🤖 MENTOR IA", "🧠 CADERNO ERROS", "⏱️ SIMULADO", 
             "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
         ])
         
-        with abas[0]: render_dashboard(None)
+        with abas[0]: 
+            from dashboard import render_dashboard; render_dashboard(None)
         with abas[1]: render_mentor(None)
-        with abas[2]: render_banco_questoes(None)
-        with abas[3]: render_caderno_erros(None)
-        with abas[4]: render_simulado_real(None)
-        with abas[5]: 
+        with abas[2]: render_caderno_erros(None)
+        with abas[3]: render_simulado_real(None)
+        with abas[4]: 
             from agenda import render_agenda; render_agenda(None)
-        with abas[6]: 
+        with abas[5]: 
             from videoteca import render_videoteca; render_videoteca(None)
-        with abas[7]: 
+        with abas[6]: 
             from cronograma import render_cronograma; render_cronograma(None)
-        with abas[8]: render_perfil(None)
+        with abas[7]: render_perfil(None)
 
     except Exception:
         st.error("Erro no app principal"); st.code(traceback.format_exc())
