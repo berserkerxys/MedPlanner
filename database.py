@@ -1,5 +1,6 @@
 # database.py
 # Versão Mestra Final: Contém TODAS as funções necessárias para o MedPlanner
+# Correção aplicada: Tratamento de XP nulo (NoneType)
 
 import os
 import json
@@ -142,9 +143,22 @@ def get_dados_graficos(u, nonce=None):
 
 def get_status_gamer(u, nonce=None):
     conn = get_db_connection()
-    row = conn.execute("SELECT xp, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
-    xp, meta = (row['xp'], row['meta_diaria']) if row else (0, 50)
-    return {"nivel": 1+(xp//1000), "xp_atual": xp, "meta_diaria": meta, "titulo": "Interno"}, pd.DataFrame()
+    try:
+        row = conn.execute("SELECT xp, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
+        # CORREÇÃO CRÍTICA: Trata XP None como 0
+        xp = int(row['xp']) if row and row['xp'] is not None else 0
+        meta = int(row['meta_diaria']) if row and row['meta_diaria'] is not None else 50
+    except:
+        xp, meta = 0, 50
+    
+    # Progresso Hoje
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    r_h = conn.execute("SELECT SUM(total) as tot FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
+    q_hoje = r_h['tot'] if r_h and r_h['tot'] else 0
+    
+    status = {'nivel': 1+(xp//1000), 'xp_atual': xp, 'meta_diaria': meta, 'titulo': "R1" if xp > 2000 else "Interno"}
+    df_m = pd.DataFrame([{"Prog": q_hoje}])
+    return status, df_m
 
 def get_benchmark_dados(u, df_user):
     # Mock para evitar erro de importação
@@ -160,9 +174,11 @@ def get_progresso_hoje(u, n=None):
 def verificar_login(u, p):
     _ensure_local_db()
     conn = get_db_connection()
-    row = conn.execute("SELECT password_hash, nome FROM usuarios WHERE username=?", (u,)).fetchone()
-    if row and bcrypt.checkpw(p.encode(), row['password_hash'].encode()):
-        return True, row['nome']
+    try:
+        row = conn.execute("SELECT password_hash, nome FROM usuarios WHERE username=?", (u,)).fetchone()
+        if row and bcrypt.checkpw(p.encode(), row['password_hash'].encode()):
+            return True, row['nome']
+    except: pass
     return False, "Erro"
 
 def criar_usuario(u, p, n):
@@ -170,6 +186,8 @@ def criar_usuario(u, p, n):
     pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
     try:
         conn.execute("INSERT INTO usuarios (username, nome, password_hash) VALUES (?,?,?)", (u, n, pw))
+        # Inicializa o perfil gamer para evitar nulos
+        conn.execute("INSERT OR IGNORE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, 0, 'Interno', 50)", (u,))
         conn.commit()
         return True, "OK"
     except: return False, "Erro"
@@ -195,15 +213,10 @@ def resetar_conta_usuario(u):
     trigger_refresh()
     return True
 
-def registrar_estudo(u, a, ac, t, **kwargs):
+def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estudo="Pos-Aula", **kwargs):
     conn = get_db_connection()
-    dt = datetime.now().strftime("%Y-%m-%d")
+    dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     
-    # Extrai tipo_estudo e srs dos kwargs ou define padrão
-    tipo_estudo = kwargs.get('tipo_estudo', 'Pos-Aula')
-    srs = kwargs.get('srs', False)
-    area_f = kwargs.get('area_f', None)
-
     # Garante normalização da área
     if not area_f:
         area_f = get_area_por_assunto(a)
@@ -213,7 +226,7 @@ def registrar_estudo(u, a, ac, t, **kwargs):
     conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", 
                  (u, a, area, dt, int(ac), int(t), tipo_estudo))
     
-    # Atualiza cronograma
+    # Atualiza cronograma (aqui está a mágica!)
     atualizar_progresso_cronograma(u, a, ac, t, tipo_estudo)
 
     # Agenda revisão se necessário
@@ -221,6 +234,10 @@ def registrar_estudo(u, a, ac, t, **kwargs):
         dt_rev = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
         conn.execute("INSERT INTO revisoes (usuario_id, assunto_nome, grande_area, data_agendada, tipo, status) VALUES (?,?,?,?,?,?)", 
                      (u, a, area, dt_rev, "1 Semana", "Pendente"))
+    
+    # Atualiza XP
+    xp_ganho = int(t) * 2
+    conn.execute("INSERT INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, ?, 'Interno', 50) ON CONFLICT(usuario_id) DO UPDATE SET xp = xp + ?", (u, xp_ganho, xp_ganho))
 
     conn.commit()
     trigger_refresh()
@@ -247,7 +264,7 @@ def registrar_simulado(u, dados):
 
 def update_meta_diaria(u, m):
     conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, meta_diaria) VALUES (?,?)", (u, m))
+    conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, (SELECT COALESCE(xp, 0) FROM perfil_gamer WHERE usuario_id=?), (SELECT COALESCE(titulo, 'Interno') FROM perfil_gamer WHERE usuario_id=?), ?)", (u, u, u, m))
     conn.commit()
     return True
 
@@ -290,5 +307,4 @@ def pesquisar_global(t): return pd.DataFrame()
 def get_db(): return True
 
 # --- SUPABASE STUBS (MANTIDOS PARA COMPATIBILIDADE) ---
-# Se não estiver usando Supabase, estas funções evitam erros de importação
 def get_supabase(): return None
