@@ -27,6 +27,7 @@ def trigger_refresh():
 
 # --- 2. INICIALIZAÇÃO ---
 def _ensure_local_db():
+    """Garante a existência de todas as tabelas necessárias."""
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("CREATE TABLE IF NOT EXISTS historico (id INTEGER PRIMARY KEY, usuario_id TEXT, assunto_nome TEXT, area_manual TEXT, data_estudo TEXT, acertos INTEGER, total INTEGER, tipo_estudo TEXT)")
@@ -36,7 +37,7 @@ def _ensure_local_db():
     c.execute("CREATE TABLE IF NOT EXISTS resumos (usuario_id TEXT, grande_area TEXT, conteudo TEXT, PRIMARY KEY (usuario_id, grande_area))")
     c.execute("CREATE TABLE IF NOT EXISTS cronogramas (usuario_id TEXT PRIMARY KEY, estado_json TEXT)")
     
-    # Migrações rápidas
+    # Migrações rápidas para colunas adicionais
     try: c.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
     except: pass
     try: c.execute("ALTER TABLE usuarios ADD COLUMN data_nascimento TEXT")
@@ -71,11 +72,13 @@ def get_area_por_assunto(assunto):
 
 # --- 3. FUNÇÕES DE CADERNO DE ERROS ---
 def get_caderno_erros(u, area):
+    _ensure_local_db()
     conn = get_db_connection()
     row = conn.execute("SELECT conteudo FROM resumos WHERE usuario_id=? AND grande_area=?", (u, area)).fetchone()
     return row['conteudo'] if row else ""
 
 def salvar_caderno_erros(u, area, texto):
+    _ensure_local_db()
     conn = get_db_connection()
     conn.execute("INSERT OR REPLACE INTO resumos (usuario_id, grande_area, conteudo) VALUES (?,?,?)", (u, area, texto or ""))
     conn.commit()
@@ -86,11 +89,13 @@ def salvar_resumo(u, a, t): return salvar_caderno_erros(u, a, t)
 
 # --- 4. FUNÇÕES DE CRONOGRAMA ---
 def get_cronograma_status(u):
+    _ensure_local_db()
     conn = get_db_connection()
     row = conn.execute("SELECT estado_json FROM cronogramas WHERE usuario_id=?", (u,)).fetchone()
     return json.loads(row['estado_json']) if row else {}
 
 def salvar_cronograma_status(u, d):
+    _ensure_local_db()
     conn = get_db_connection()
     conn.execute("INSERT OR REPLACE INTO cronogramas (usuario_id, estado_json) VALUES (?,?)", (u, json.dumps(d)))
     conn.commit()
@@ -103,6 +108,7 @@ def calcular_meta_questoes(prioridade, desempenho_anterior=None):
     return m, m + 10
 
 def resetar_revisoes_aula(u, aula):
+    _ensure_local_db()
     estado = get_cronograma_status(u)
     if aula in estado:
         estado[aula].update({"acertos_pre": 0, "total_pre": 0, "acertos_pos": 0, "total_pos": 0, "feito": False})
@@ -111,6 +117,7 @@ def resetar_revisoes_aula(u, aula):
 
 def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-Aula"):
     """Atualiza APENAS os números no cronograma."""
+    _ensure_local_db()
     estado = get_cronograma_status(u)
     dados = estado.get(assunto, {
         "feito": False, "prioridade": "Normal", 
@@ -133,6 +140,7 @@ def atualizar_progresso_cronograma(u, assunto, acertos, total, tipo_estudo="Pos-
 # --- 5. FUNÇÕES DE PERFORMANCE E DASHBOARD ---
 @st.cache_data(ttl=60)
 def get_dados_graficos(u, nonce=None):
+    _ensure_local_db()
     conn = get_db_connection()
     df = pd.read_sql_query("SELECT * FROM historico WHERE usuario_id=?", conn, params=(u,))
     if not df.empty:
@@ -141,6 +149,7 @@ def get_dados_graficos(u, nonce=None):
     return df
 
 def get_status_gamer(u, nonce=None):
+    _ensure_local_db()
     conn = get_db_connection()
     row = conn.execute("SELECT xp, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
     
@@ -161,6 +170,7 @@ def get_benchmark_dados(u, df_user):
     return pd.DataFrame([{"Area": "Geral", "Tipo": "Você", "Performance": 70}, {"Area": "Geral", "Tipo": "Comunidade", "Performance": 65}])
 
 def get_progresso_hoje(u, n=None):
+    _ensure_local_db()
     conn = get_db_connection()
     hoje = datetime.now().strftime("%Y-%m-%d")
     r = conn.execute("SELECT SUM(total) FROM historico WHERE usuario_id=? AND data_estudo=?", (u, hoje)).fetchone()
@@ -176,26 +186,32 @@ def verificar_login(u, p):
     return False, "Erro"
 
 def criar_usuario(u, p, n):
+    _ensure_local_db()
     conn = get_db_connection()
     pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
     try:
         conn.execute("INSERT INTO usuarios (username, nome, password_hash) VALUES (?,?,?)", (u, n, pw))
+        # Inicializa o perfil gamer para evitar o erro de 'no such table' ou 'empty data'
+        conn.execute("INSERT OR IGNORE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, 0, 'Interno', 50)", (u,))
         conn.commit()
         return True, "OK"
     except: return False, "Erro"
 
 def get_dados_pessoais(u):
+    _ensure_local_db()
     conn = get_db_connection()
     r = conn.execute("SELECT email, data_nascimento FROM usuarios WHERE username=?", (u,)).fetchone()
     return {"email": r['email'] if r else "", "nascimento": r['data_nascimento'] if r else None}
 
 def update_dados_pessoais(u, e, n):
+    _ensure_local_db()
     conn = get_db_connection()
     conn.execute("UPDATE usuarios SET email=?, data_nascimento=? WHERE username=?", (e, n, u))
     conn.commit()
     return True
 
 def resetar_conta_usuario(u):
+    _ensure_local_db()
     conn = get_db_connection()
     conn.execute("DELETE FROM historico WHERE usuario_id=?", (u,))
     conn.execute("DELETE FROM revisoes WHERE usuario_id=?", (u,))
@@ -206,6 +222,7 @@ def resetar_conta_usuario(u):
     return True
 
 def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estudo="Pos-Aula", **kwargs):
+    _ensure_local_db()
     conn = get_db_connection()
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
     
@@ -218,7 +235,7 @@ def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estu
     conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", 
                  (u, a, area, dt, int(ac), int(t), tipo_estudo))
     
-    # Atualiza cronograma (aqui está a mágica!)
+    # Atualiza cronograma
     atualizar_progresso_cronograma(u, a, ac, t, tipo_estudo)
 
     # Agenda revisão se necessário
@@ -236,6 +253,7 @@ def registrar_simulado(u, dados):
     Registra um simulado completo, salvando cada área individualmente.
     dados: {'Area': {'acertos': 10, 'total': 20}, ...}
     """
+    _ensure_local_db()
     conn = get_db_connection()
     dt = datetime.now().strftime("%Y-%m-%d")
     
@@ -251,14 +269,16 @@ def registrar_simulado(u, dados):
     return "✅ Simulado Salvo!"
 
 def update_meta_diaria(u, m):
+    _ensure_local_db()
     conn = get_db_connection()
-    conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, meta_diaria) VALUES (?,?)", (u, m))
+    conn.execute("INSERT OR REPLACE INTO perfil_gamer (usuario_id, xp, titulo, meta_diaria) VALUES (?, (SELECT COALESCE(xp, 0) FROM perfil_gamer WHERE usuario_id=?), (SELECT COALESCE(titulo, 'Interno') FROM perfil_gamer WHERE usuario_id=?), ?)", (u, u, u, m))
     conn.commit()
     return True
 
 def get_conquistas_e_stats(u): return 0, [], None
 
 def listar_revisoes_completas(u, nonce=None):
+    _ensure_local_db()
     conn = get_db_connection()
     return pd.read_sql_query("SELECT * FROM revisoes WHERE usuario_id=?", conn, params=(u,))
 
@@ -268,12 +288,14 @@ def concluir_revisao(rid, ac, tot):
     return "✅ OK"
 
 def excluir_revisao(rid):
+    _ensure_local_db()
     conn = get_db_connection()
     conn.execute("DELETE FROM revisoes WHERE id=?", (rid,))
     conn.commit()
     trigger_refresh()
 
 def reagendar_inteligente(rid, desempenho):
+    _ensure_local_db()
     conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     rev = conn.execute("SELECT * FROM revisoes WHERE id=?", (rid,)).fetchone()
