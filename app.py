@@ -1,123 +1,190 @@
 # app.py
 import streamlit as st
+import traceback
+import sys
 import time
+import extra_streamlit_components as stx  # Biblioteca essencial para cookies
 from datetime import datetime, timedelta
 
-# Configuração de página no topo
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
 
-# CSS Responsivo e de Performance
+# CSS para estilo profissional
 st.markdown("""
 <style>
-    .block-container { padding: 1rem; max-width: 100%; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; overflow-x: auto; }
-    /* Esconde elementos enquanto carrega */
-    .loading-overlay {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: white; z-index: 9999; display: flex;
-        flex-direction: column; align-items: center; justify-content: center;
-    }
+    [data-testid="stSidebarNav"] {display: none;}
+    .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 20px; border-bottom: 2px solid #f0f2f6; }
+    .stTabs [data-baseweb="tab"] { font-size: 16px; font-weight: 600; }
+    .login-header { text-align: center; margin-bottom: 2rem; }
+    .stButton>button { border-radius: 8px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
-# Gerenciador de Estado Inicial
-if 'logado' not in st.session_state: st.session_state.logado = False
-if 'ready' not in st.session_state: st.session_state.ready = False
+# Gerenciador de Cookies
+# REMOVIDO @st.cache_resource: Widgets não devem ser cacheados dessa forma.
+def get_cookie_manager():
+    return stx.CookieManager(key="app_main_cookie_manager")
 
-# --- FUNÇÃO DE CARREGAMENTO INICIAL (BOOTSTRAP) ---
-def inicializar_aplicacao():
-    """Tela de loading que pré-carrega dados pesados na cache."""
-    placeholder = st.empty()
-    with placeholder.container():
-        st.markdown("""
-            <div style='text-align:center; margin-top: 20%;'>
-                <h1 style='font-size: 50px;'>🩺</h1>
-                <h2>Sincronizando MedPlanner...</h2>
-                <p>Otimizando seu cronograma e banco de dados.</p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        progress_bar = st.progress(0)
-        
-        # Passo 1: Conexão DB e Cache de Aulas
-        import database
-        database._ensure_local_db()
-        progress_bar.progress(40)
-        time.sleep(0.3)
-        
-        # Passo 2: Carregamento de dados MedCof (Cache)
-        database._carregar_dados_medcof()
-        progress_bar.progress(80)
-        time.sleep(0.2)
-        
-        # Passo 3: Finalização
-        st.session_state.ready = True
-        progress_bar.progress(100)
-        time.sleep(0.3)
+cookie_manager = get_cookie_manager()
+
+_import_ok = True
+_import_exc = None
+try:
+    import pandas as pd
     
-    placeholder.empty()
+    # Imports Locais
+    from sidebar_v2 import render_sidebar
+    from database import verificar_login, criar_usuario, get_resumo, salvar_resumo
+    from perfil import render_perfil
+    from mentor import render_mentor
+    from simulado import render_simulado_real
+    from caderno_erros import render_caderno_erros
+    from videoteca import render_videoteca
+    from agenda import render_agenda
+    from cronograma import render_cronograma
+    from dashboard import render_dashboard
+    from banco_questoes import render_banco_questoes
+    
+except Exception as e:
+    _import_ok = False
+    _import_exc = traceback.format_exc()
 
-# --- LÓGICA DE LOGIN ---
+if not _import_ok:
+    st.error("Erro crítico na inicialização.")
+    st.code(_import_exc)
+    st.stop()
+
+# --- LÓGICA DE SESSÃO PERSISTENTE ---
+def verificar_sessao_automatica():
+    time.sleep(0.1)
+    auth_cookie = cookie_manager.get(cookie="medplanner_auth")
+    
+    if auth_cookie and not st.session_state.get('logado', False):
+        try:
+            user_salvo = auth_cookie
+            st.session_state.logado = True
+            st.session_state.username = user_salvo
+            st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
+            st.rerun() 
+            return True
+        except:
+            return False
+    return False
+
+# Inicialização de Estado
+if 'logado' not in st.session_state: 
+    st.session_state.logado = False
+    
+if 'username' not in st.session_state: st.session_state.username = "guest"
+if 'u_nome' not in st.session_state: st.session_state.u_nome = "Visitante"
+if 'data_nonce' not in st.session_state: st.session_state.data_nonce = 0
+
+# Tenta login automático se não estiver logado
+if not st.session_state.logado:
+    verificar_sessao_automatica()
+
+def fazer_login(u, nome_real):
+    st.session_state.logado = True
+    st.session_state.username = u
+    st.session_state.u_nome = nome_real
+    
+    # Salva cookie por 30 dias
+    expires_at = datetime.now() + timedelta(days=30)
+    cookie_manager.set("medplanner_auth", u, expires_at=expires_at)
+    
+    st.toast(f"Bem-vindo de volta, {nome_real}!", icon="👋")
+    time.sleep(0.5)
+    st.rerun()
+
+def fazer_logout():
+    st.session_state.logado = False
+    st.session_state.username = "guest"
+    cookie_manager.delete("medplanner_auth")
+    time.sleep(0.1)
+    st.rerun()
+
+def render_resumos_ui(u):
+    pass
+
+def app_principal():
+    try:
+        render_sidebar()
+        
+        # Check de Logout vindo da Sidebar
+        if not st.session_state.logado:
+            fazer_logout()
+            return
+
+        st.markdown("<h2 style='text-align:center;'>🩺 MEDPLANNER PRO</h2>", unsafe_allow_html=True)
+
+        # Pomodoro
+        with st.expander("⏲️ Foco Pomodoro", expanded=False):
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c2:
+                mode = st.radio("Modo:", ["Estudo (25m)", "Pausa (5m)"], horizontal=True)
+                if st.button("🚀 Iniciar", key="pom_start"):
+                    st.session_state._pom_rem = 25*60 if "Estudo" in mode else 5*60
+                    st.rerun()
+            if st.session_state.get("_pom_rem", 0) > 0:
+                m, s = divmod(st.session_state["_pom_rem"], 60)
+                st.markdown(f"<h1 style='text-align:center;'>{m:02d}:{s:02d}</h1>", unsafe_allow_html=True)
+                st.session_state["_pom_rem"] = max(0, st.session_state["_pom_rem"]-1)
+                time.sleep(1); st.rerun()
+
+        # Abas Principais
+        abas = st.tabs([
+            "📊 DASHBOARD", "🤖 MENTOR IA", "🏦 QUESTÕES", "🧠 CADERNO ERROS", "⏱️ SIMULADO", 
+            "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
+        ])
+        
+        with abas[0]: render_dashboard(None)
+        with abas[1]: render_mentor(None)
+        with abas[2]: render_banco_questoes(None)
+        with abas[3]: render_caderno_erros(None)
+        with abas[4]: render_simulado_real(None)
+        with abas[5]: 
+            from agenda import render_agenda; render_agenda(None)
+        with abas[6]: 
+            from videoteca import render_videoteca; render_videoteca(None)
+        with abas[7]: 
+            from cronograma import render_cronograma; render_cronograma(None)
+        with abas[8]: render_perfil(None)
+
+    except Exception:
+        st.error("Erro no app principal"); st.code(traceback.format_exc())
+
 def tela_login():
-    import database
-    st.markdown("<div style='text-align:center;'><h1>🩺 MedPlanner</h1><p>Acesse sua conta para continuar</p></div>", unsafe_allow_html=True)
-    
+    st.markdown("<br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
+        st.markdown("<div class='login-header'><h1>🩺 MedPlanner Elite</h1><p>Sua aprovação começa aqui.</p></div>", unsafe_allow_html=True)
         with st.container(border=True):
-            u = st.text_input("Usuário")
-            p = st.text_input("Senha", type="password")
-            if st.button("Entrar", type="primary", use_container_width=True):
-                ok, nome = database.verificar_login(u, p)
-                if ok:
-                    st.session_state.logado = True
-                    st.session_state.username = u
-                    st.session_state.u_nome = nome
-                    st.rerun()
-                else:
-                    st.error("Credenciais inválidas")
+            tab_login, tab_cad = st.tabs(["🔐 Entrar", "✨ Criar Conta"])
+            
+            with tab_login:
+                u = st.text_input("Usuário", key="l_user")
+                p = st.text_input("Senha", type="password", key="l_pass")
+                if st.button("Acessar", type="primary", use_container_width=True):
+                    if u and p:
+                        ok, nome = verificar_login(u, p)
+                        if ok:
+                            fazer_login(u, nome)
+                        else: st.error(nome)
+                    else: st.warning("Preencha tudo.")
+            
+            with tab_cad:
+                nu = st.text_input("Novo Usuário", key="n_user")
+                nn = st.text_input("Nome", key="n_name")
+                np = st.text_input("Senha", type="password", key="n_pass")
+                if st.button("Cadastrar", use_container_width=True):
+                    if nu and nn and np:
+                        ok, msg = criar_usuario(nu, np, nn)
+                        if ok: st.success("Criado! Faça login."); st.balloons()
+                        elif "UNIQUE" in str(msg) or "IntegrityError" in str(msg): st.error("Usuário já existe.")
+                        else: st.error(f"Erro: {msg}")
+                    else: st.warning("Preencha tudo.")
 
-# --- APP PRINCIPAL (MODULAR) ---
-def app_principal():
-    # Só renderiza a sidebar UMA VEZ
-    from sidebar_v2 import render_sidebar
-    render_sidebar()
-
-    st.markdown("<h3 style='text-align:center;'>MedPlanner Elite</h3>", unsafe_allow_html=True)
-
-    # Abas - O conteúdo dentro das abas só será importado ao clicar
-    abas = st.tabs([
-        "📊 DASHBOARD", "🗂️ CRONOGRAMA", "🏦 BANCO", "🧠 ERROS", "👤 PERFIL"
-    ])
-
-    with abas[0]:
-        # Lazy Import: Dashboard
-        from dashboard import render_dashboard
-        render_dashboard(None)
-    
-    with abas[1]:
-        # Lazy Import: Cronograma
-        from cronograma import render_cronograma
-        render_cronograma(None)
-        
-    with abas[2]:
-        # Lazy Import: Banco
-        from banco_questoes import render_banco_questoes
-        render_banco_questoes(None)
-
-    with abas[3]:
-        from caderno_erros import render_caderno_erros
-        render_caderno_erros(None)
-
-    with abas[4]:
-        from perfil import render_perfil
-        render_perfil(None)
-
-# --- CONTROLE DE FLUXO ---
-if not st.session_state.logado:
-    tela_login()
-elif not st.session_state.ready:
-    inicializar_aplicacao()
-    st.rerun()
-else:
+# Lógica de Controle de Fluxo
+if st.session_state.logado:
     app_principal()
+else:
+    tela_login()

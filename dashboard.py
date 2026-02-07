@@ -6,21 +6,16 @@ from database import get_status_gamer, get_dados_graficos, get_benchmark_dados
 
 def plot_pro(dataframe, col, tipo='bar'):
     # --- BLINDAGEM CONTRA ERRO DE COLUNA ---
-    # Trabalha com uma cópia para evitar SettingWithCopyWarning
     df_chart = dataframe.copy()
     
-    # Se a coluna 'area' não existir, cria com valor padrão
     if 'area' not in df_chart.columns:
         if 'area_manual' in df_chart.columns:
             df_chart['area'] = df_chart['area_manual'].fillna('Geral')
         else:
             df_chart['area'] = 'Geral'
             
-    # Garante que não sobrou nenhum Nulo/NaN
     df_chart['area'] = df_chart['area'].fillna('Geral')
-    # ---------------------------------------
 
-    # Agrupamento seguro
     df_g = df_chart.groupby([col, 'area']).agg({'acertos':'sum', 'total':'sum'}).reset_index()
     df_g['%'] = (df_g['acertos'] / df_g['total'] * 100).round(1)
     
@@ -45,18 +40,13 @@ def render_dashboard(conn_ignored):
     u = st.session_state.username
     nonce = st.session_state.data_nonce
     
-    # Busca dados (agora mais robusto no database.py também)
     df = get_dados_graficos(u, nonce)
-    
-    # Busca status atualizado do gamer (incluindo meta diária do banco)
     status, df_m = get_status_gamer(u, nonce)
     
-    # Se estiver vazio, não tenta renderizar nada que possa quebrar
     if df.empty and df_m.empty:
         st.info("Sem dados suficientes. Registre seus primeiros estudos na barra lateral ou agenda!")
         return
 
-    # Garante que a coluna 'area' existe no dataframe principal antes de dividir nas abas
     if not df.empty and 'area' not in df.columns:
         df['area'] = df.get('area_manual', 'Geral').fillna('Geral')
 
@@ -66,27 +56,22 @@ def render_dashboard(conn_ignored):
         cols = st.columns(3)
         row = df_m.iloc[0]
         
-        # LÓGICA DE SINCRONIZAÇÃO DE META
-        # 1. Tenta pegar o valor 'vivo' da sessão (mais atualizado se o usuário acabou de mexer)
+        # --- CORREÇÃO DE SINCRONIA ---
+        # Tenta pegar da sessão (estado mais recente visualmente), senão pega do banco
         meta_sessao = st.session_state.get("sb_meta_slider") or st.session_state.get("pf_meta_slider")
-        
-        # 2. Se não tiver na sessão, pega do banco
         meta_banco = int(status.get('meta_diaria', 50))
         
-        # 3. Define a meta final para exibição
+        # A meta final visual deve ser a mais recente que o utilizador viu/mexeu
         meta_final = meta_sessao if meta_sessao else meta_banco
         
         progresso_hoje = int(row['Prog'])
         
-        # Atualiza visualmente o card com a meta sincronizada
         cols[0].metric("Meta Diária", f"{progresso_hoje} / {meta_final}")
         
-        # Barra de progresso com proteção de divisão por zero
         perc_meta = min(progresso_hoje/meta_final, 1.0) if meta_final > 0 else 0
         cols[1].progress(perc_meta)
         
-        # XP Ganho Hoje
-        xp_hoje = progresso_hoje * 2 # Exemplo de cálculo simples
+        xp_hoje = progresso_hoje * 2 
         cols[2].metric("XP Gerado", f"+{xp_hoje} XP")
 
     st.divider()
@@ -107,13 +92,11 @@ def render_dashboard(conn_ignored):
         
         t1, t2, t3 = st.tabs(["Diário", "Semanal", "Mensal"])
         
-        # Tratamento de datas seguro
         if 'data' in df.columns:
             df['data'] = pd.to_datetime(df['data'])
             
             with t1: 
                 df['d'] = df['data'].dt.strftime('%d/%m')
-                # Passa df.tail(30) que é uma fatia, mas o plot_pro agora faz .copy()
                 st.plotly_chart(plot_pro(df.tail(30), 'd', 'line'), use_container_width=True)
             with t2:
                 df['s'] = df['data'].dt.to_period('W').apply(lambda r: r.start_time.strftime('%d/%m'))
