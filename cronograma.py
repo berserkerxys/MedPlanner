@@ -195,4 +195,4 @@ def render_cronograma(conn_ignored):
                     
                     with c2:
                         s = PRIORIDADES_STYLE.get(prio, PRIORIDADES_STYLE["Normal"])
-                        st.markdown(f"<div style='background:{s['bg']};color:{s['color']};padding:2px;border-radius:4px;text
+                        st.markdown(f"<div style='background:{s['bg']};color:{s['color']};padding:2px;border-radius:4px;text")
