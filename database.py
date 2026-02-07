@@ -143,7 +143,10 @@ def get_dados_graficos(u, nonce=None):
 def get_status_gamer(u, nonce=None):
     conn = get_db_connection()
     row = conn.execute("SELECT xp, meta_diaria FROM perfil_gamer WHERE usuario_id=?", (u,)).fetchone()
-    xp, meta = (row['xp'], row['meta_diaria']) if row else (0, 50)
+    
+    # CORREÇÃO CRÍTICA: Garante que XP e Meta sejam inteiros, nunca None
+    xp = int(row['xp']) if row and row['xp'] is not None else 0
+    meta = int(row['meta_diaria']) if row and row['meta_diaria'] is not None else 50
     
     # Progresso Hoje
     hoje = datetime.now().strftime("%Y-%m-%d")
@@ -206,6 +209,7 @@ def resetar_conta_usuario(u):
 def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estudo="Pos-Aula", **kwargs):
     conn = get_db_connection()
     dt = (data_p or datetime.now()).strftime("%Y-%m-%d")
+    
     # Garante normalização da área
     if not area_f:
         area_f = get_area_por_assunto(a)
@@ -215,7 +219,7 @@ def registrar_estudo(u, a, ac, t, data_p=None, area_f=None, srs=False, tipo_estu
     conn.execute("INSERT INTO historico (usuario_id, assunto_nome, area_manual, data_estudo, acertos, total, tipo_estudo) VALUES (?,?,?,?,?,?,?)", 
                  (u, a, area, dt, int(ac), int(t), tipo_estudo))
     
-    # Atualiza cronograma
+    # Atualiza cronograma (aqui está a mágica!)
     atualizar_progresso_cronograma(u, a, ac, t, tipo_estudo)
 
     # Agenda revisão se necessário

@@ -3,7 +3,7 @@ import streamlit as st
 import traceback
 import sys
 import time
-import extra_streamlit_components as stx  # Biblioteca essencial para cookies
+import extra_streamlit_components as stx
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="MedPlanner Elite", page_icon="🩺", layout="wide")
@@ -20,10 +20,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Gerenciador de Cookies
-# CORRIGIDO: Removido @st.cache_resource para evitar CachedWidgetWarning e erros de widget dentro de cache
-# Removido experimental_allow_widgets=True (deprecated)
+# CORREÇÃO: Cache removido. O componente deve ser instanciado diretamente.
 def get_cookie_manager():
-    return stx.CookieManager()
+    return stx.CookieManager(key="main_cookie_manager_v3")
 
 cookie_manager = get_cookie_manager()
 
@@ -56,7 +55,7 @@ if not _import_ok:
 
 # --- LÓGICA DE SESSÃO PERSISTENTE ---
 def verificar_sessao_automatica():
-    # Tenta ler o cookie de autenticação
+    # Pequeno delay para garantir que o componente JS carregou
     time.sleep(0.1)
     auth_cookie = cookie_manager.get(cookie="medplanner_auth")
     
@@ -66,6 +65,7 @@ def verificar_sessao_automatica():
             st.session_state.logado = True
             st.session_state.username = user_salvo
             st.session_state.u_nome = "Dr(a). " + user_salvo.capitalize()
+            st.rerun() # Recarrega para aplicar o estado logado
             return True
         except:
             return False
@@ -99,7 +99,9 @@ def fazer_login(u, nome_real):
 def fazer_logout():
     st.session_state.logado = False
     st.session_state.username = "guest"
+    # Remove o cookie
     cookie_manager.delete("medplanner_auth")
+    time.sleep(0.1)
     st.rerun()
 
 def render_resumos_ui(u):
@@ -136,8 +138,7 @@ def app_principal():
             "📅 AGENDA", "📚 VIDEOTECA", "🗂️ CRONOGRAMA", "👤 PERFIL"
         ])
         
-        with abas[0]: 
-            from dashboard import render_dashboard; render_dashboard(None)
+        with abas[0]: render_dashboard(None)
         with abas[1]: render_mentor(None)
         with abas[2]: render_banco_questoes(None)
         with abas[3]: render_caderno_erros(None)
