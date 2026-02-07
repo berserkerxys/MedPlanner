@@ -26,6 +26,7 @@ def update_row_callback(u, aula_nome, full_state):
     d_atual = full_state.get(aula_nome, {})
     d_atual["feito"] = check
     full_state[aula_nome] = d_atual
+    
     salvar_cronograma_status(u, full_state)
     st.toast("Progresso salvo!", icon="✅")
 
@@ -85,7 +86,7 @@ def render_cronograma(conn_ignored):
     if 'cronograma_view_mode' not in st.session_state:
         st.session_state.cronograma_view_mode = "Lista"
     if 'cronograma_group_by' not in st.session_state:
-        st.session_state.cronograma_group_by = "Bloco" # Padrão: Por Bloco
+        st.session_state.cronograma_group_by = "Bloco"
 
     # --- HEADER E CONTROLES ---
     c_kpi, c_ctrl1, c_ctrl2 = st.columns([4, 1.5, 1.5])
@@ -99,7 +100,6 @@ def render_cronograma(conn_ignored):
         st.progress(prog_pct, text=f"Progresso: {concluidas}/{total_aulas} temas ({int(prog_pct*100)}%) | Questões: {total_q}")
 
     with c_ctrl1:
-        # Botão para alternar entre Lista e Cards
         icon_view = "📅" if st.session_state.cronograma_view_mode == "Lista" else "📝"
         label_view = "Ver Cards" if st.session_state.cronograma_view_mode == "Lista" else "Ver Lista"
         if st.button(f"{icon_view} {label_view}", use_container_width=True):
@@ -107,17 +107,15 @@ def render_cronograma(conn_ignored):
             st.rerun()
             
     with c_ctrl2:
-        # Botão para alternar agrupamento (Bloco vs Matéria)
         icon_grp = "📚" if st.session_state.cronograma_group_by == "Bloco" else "🗂️"
         label_grp = "Por Matéria" if st.session_state.cronograma_group_by == "Bloco" else "Por Bloco"
-        if st.button(f"{icon_grp} {label_grp}", use_container_width=True, help="Alternar organização entre Blocos Cronológicos e Grandes Áreas"):
+        if st.button(f"{icon_grp} {label_grp}", use_container_width=True):
             st.session_state.cronograma_group_by = "Area" if st.session_state.cronograma_group_by == "Bloco" else "Bloco"
             st.rerun()
     
     st.divider()
 
-    # Define a coluna de agrupamento baseado na escolha
-    coluna_agrupamento = st.session_state.cronograma_group_by # 'Bloco' ou 'Area'
+    coluna_agrupamento = st.session_state.cronograma_group_by
     grupos_unicos = sorted(df[coluna_agrupamento].unique())
 
     # --- RENDERIZAÇÃO ---
@@ -125,7 +123,6 @@ def render_cronograma(conn_ignored):
     if st.session_state.cronograma_view_mode == "Blocos":
         # === VISÃO DE CARDS ===
         grupo_sel = st.selectbox(f"Filtrar {coluna_agrupamento}:", ["Todos"] + list(grupos_unicos))
-        
         df_view = df if grupo_sel == "Todos" else df[df[coluna_agrupamento] == grupo_sel]
         
         cols = st.columns(3)
@@ -149,10 +146,24 @@ def render_cronograma(conn_ignored):
                     c_chk.checkbox("Feito", value=d.get('feito', False), key=f"cb_blk_{aula}", on_change=update_row_callback, args=(u, aula, estado), label_visibility="collapsed")
                     
                     meta_pre, meta_pos = calcular_meta_questoes(prio, d.get('ultimo_desempenho'))
-                    c_meta.caption(f"Pré: {d.get('total_pre',0)}/{meta_pre} | Pós: {d.get('total_pos',0)}/{meta_pos}")
+                    tt_pre = d.get('total_pre', 0)
+                    tt_pos = d.get('total_pos', 0)
+                    
+                    # --- BARRA DE PROGRESSO POR ASSUNTO ---
+                    total_atual = tt_pre + tt_pos
+                    total_meta = meta_pre + meta_pos
+                    
+                    if total_meta > 0:
+                        prog_assunto = min(total_atual / total_meta, 1.0)
+                        # Cor condicional (Verde se bateu a meta, Azul se está em progresso)
+                        cor_barra = "green" if total_atual >= total_meta else "blue"
+                        st.progress(prog_assunto, text=f"{int(prog_assunto*100)}% ({total_atual}/{total_meta}q)")
+                    else:
+                        st.progress(0, text="0/0q")
+                    
+                    st.caption(f"Pré: {tt_pre}/{meta_pre} | Pós: {tt_pos}/{meta_pos}")
                     
                     c_agd, c_rst = st.columns(2)
-                    tt_pos = d.get('total_pos', 0)
                     ac_pos = d.get('acertos_pos', 0)
                     
                     if c_agd.button("📅 Agendar", key=f"agd_blk_{aula}", help="Agendar Revisão", disabled=tt_pos==0):
@@ -161,6 +172,7 @@ def render_cronograma(conn_ignored):
                     
                     if c_rst.button("↺ Reset", key=f"rst_blk_{aula}"):
                         reset_callback(u, aula)
+                        st.rerun()
 
     else:
         # === VISÃO DE LISTA (EXPANDERS) ===
@@ -168,20 +180,12 @@ def render_cronograma(conn_ignored):
             df_grupo = df[df[coluna_agrupamento] == grupo]
             feitas_grupo = sum(1 for a in df_grupo['Aula'] if estado.get(a, {}).get('feito'))
             
-            # Título do Expander muda conforme o agrupamento
             titulo_expander = f"{grupo}"
-            if coluna_agrupamento == 'Area':
-                titulo_expander = f"🏥 {grupo.upper()}"
+            if coluna_agrupamento == 'Area': titulo_expander = f"🏥 {grupo.upper()}"
             
             with st.expander(f"{titulo_expander} ({feitas_grupo}/{len(df_grupo)})", expanded=False):
-                # Cabeçalhos
                 c_h1, c_h2, c_h3, c_h4, c_h5, c_h6 = st.columns([0.05, 0.15, 0.30, 0.15, 0.15, 0.20])
-                c_h1.caption("✔")
-                c_h2.caption("Prioridade")
-                c_h3.caption("Aula")
-                c_h4.caption("Pré-Aula")
-                c_h5.caption("Pós-Aula")
-                c_h6.caption("Ação")
+                c_h1.caption("✔"); c_h2.caption("Prioridade"); c_h3.caption("Aula"); c_h4.caption("Pré-Aula"); c_h5.caption("Pós-Aula"); c_h6.caption("Ação")
 
                 for _, row in df_grupo.iterrows():
                     aula = row['Aula']
@@ -195,4 +199,36 @@ def render_cronograma(conn_ignored):
                     
                     with c2:
                         s = PRIORIDADES_STYLE.get(prio, PRIORIDADES_STYLE["Normal"])
-                        st.markdown(f"<div style='background:{s['bg']};color:{s['color']};padding:2px;border-radius:4px;text")
+                        st.markdown(f"<div style='background:{s['bg']};color:{s['color']};padding:2px;border-radius:4px;text-align:center;font-size:0.7em;font-weight:bold'>{s['icon']} {s['label']}</div>", unsafe_allow_html=True)
+                    
+                    with c3:
+                        st.markdown(f"**{aula}**")
+                        # --- BARRA DE PROGRESSO POR ASSUNTO (Compacta) ---
+                        tt_total = d.get('total_pre', 0) + d.get('total_pos', 0)
+                        meta_total = meta_pre + meta_pos
+                        if meta_total > 0:
+                            prog_subj = min(tt_total / meta_total, 1.0)
+                            st.progress(prog_subj) # Barra sem texto para não poluir a linha
+                        else:
+                            st.caption("-")
+                    
+                    acp, ttp = d.get('acertos_pre', 0), d.get('total_pre', 0)
+                    with c4: st.progress(min(ttp/meta_pre, 1.0) if meta_pre>0 else 0, text=f"{acp}/{ttp}")
+                    
+                    acps, ttps = d.get('acertos_pos', 0), d.get('total_pos', 0)
+                    with c5: st.progress(min(ttps/meta_pos, 1.0) if meta_pos>0 else 0, text=f"{acps}/{ttps}")
+                    
+                    with c6:
+                        tt_geral = ttp + ttps
+                        if tt_geral > 0:
+                            ca, cb = st.columns(2)
+                            if ca.button("📅", key=f"agd_{aula}", help="Agendar Revisão"):
+                                agendar_revisao_callback(u, aula, acp+acps, tt_geral)
+                                st.rerun()
+                            if cb.button("↺", key=f"rst_{aula}", help="Reiniciar"):
+                                reset_callback(u, aula)
+                                st.rerun()
+                        else:
+                            st.caption("—")
+                    
+                    st.markdown("<hr style='margin:2px 0; border-top: 1px solid #f0f2f6;'>", unsafe_allow_html=True)
